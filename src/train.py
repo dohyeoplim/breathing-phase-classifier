@@ -66,6 +66,7 @@ def train_model():
     model = ResidualNetworkForBreathingAudio().to(device)
     loss_function = nn.BCEWithLogitsLoss(pos_weight=positive_class_weight)
     optimizer = optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-4)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="max", factor=0.5, patience=2, verbose=True)
 
     os.makedirs("models", exist_ok=True)
     best_validation_accuracy = 0.0
@@ -91,6 +92,7 @@ def train_model():
         print_epoch_summary(epoch_index, average_loss)
 
         validation_accuracy = evaluate_model(model, validation_data_loader)
+        scheduler.step(validation_accuracy)
 
         if validation_accuracy > best_validation_accuracy:
             best_validation_accuracy = validation_accuracy

@@ -21,26 +21,28 @@ class SqueezeExcitationBlock(nn.Module):
 
 
 class ResidualConvolutionalBlock(nn.Module):
-    def __init__(self, input_channels: int, output_channels: int):
+    def __init__(self, input_channels: int, output_channels: int, dropout_rate: float = 0.2):
         super().__init__()
         self.convolutional_sequence = nn.Sequential(
             nn.Conv2d(input_channels, output_channels, kernel_size=3, padding=1),
             nn.BatchNorm2d(output_channels),
             nn.ReLU(),
+            nn.Dropout2d(dropout_rate),
             nn.Conv2d(output_channels, output_channels, kernel_size=3, padding=1),
-            nn.BatchNorm2d(output_channels)
+            nn.BatchNorm2d(output_channels),
+            nn.ReLU(),
+            nn.Dropout2d(dropout_rate)
         )
         self.identity_projection = None
         if input_channels != output_channels:
             self.identity_projection = nn.Conv2d(input_channels, output_channels, kernel_size=1)
-        self.activation = nn.ReLU()
         self.attention_block = SqueezeExcitationBlock(output_channels)
 
     def forward(self, input_tensor):
         identity = input_tensor if self.identity_projection is None else self.identity_projection(input_tensor)
         output = self.convolutional_sequence(input_tensor)
         output = self.attention_block(output)
-        return self.activation(output + identity)
+        return output + identity
 
 
 class ResidualNetworkForBreathingAudio(nn.Module):
@@ -50,6 +52,7 @@ class ResidualNetworkForBreathingAudio(nn.Module):
             nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, padding=1),
             nn.BatchNorm2d(16),
             nn.ReLU(),
+            nn.Dropout2d(0.2),
             nn.MaxPool2d(kernel_size=2)
         )
         self.residual_blocks = nn.Sequential(
