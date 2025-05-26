@@ -1,73 +1,43 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as functional
 
-class SqueezeExcitationBlock(nn.Module):
-    def __init__(self, number_of_channels: int, reduction_ratio: int = 8):
-        super().__init__()
-        self.global_pool = nn.AdaptiveAvgPool2d(1)
-        self.channel_mixing = nn.Sequential(
-            nn.Linear(number_of_channels, number_of_channels // reduction_ratio),
-            nn.ReLU(),
-            nn.Linear(number_of_channels // reduction_ratio, number_of_channels),
-            nn.Sigmoid()
-        )
-
-    def forward(self, input_tensor):
-        batch_size, channels, _, _ = input_tensor.size()
-        squeeze = self.global_pool(input_tensor).view(batch_size, channels)
-        excitation = self.channel_mixing(squeeze).view(batch_size, channels, 1, 1)
-        return input_tensor * excitation
-
-
-class ResidualConvolutionalBlock(nn.Module):
-    def __init__(self, input_channels: int, output_channels: int):
-        super().__init__()
-        self.convolutional_sequence = nn.Sequential(
-            nn.Conv2d(input_channels, output_channels, kernel_size=3, padding=1),
-            nn.BatchNorm2d(output_channels),
-            nn.ReLU(),
-            nn.Conv2d(output_channels, output_channels, kernel_size=3, padding=1),
-            nn.BatchNorm2d(output_channels)
-        )
-        self.identity_projection = None
-        if input_channels != output_channels:
-            self.identity_projection = nn.Conv2d(input_channels, output_channels, kernel_size=1)
-        self.activation = nn.ReLU()
-        self.attention_block = SqueezeExcitationBlock(output_channels)
-
-    def forward(self, input_tensor):
-        identity = input_tensor if self.identity_projection is None else self.identity_projection(input_tensor)
-        output = self.convolutional_sequence(input_tensor)
-        output = self.attention_block(output)
-        return self.activation(output + identity)
-
-
-class ResidualNetworkForBreathingAudio(nn.Module):
+class Model(nn.Module):
     def __init__(self):
         super().__init__()
-        self.input_block = nn.Sequential(
-            nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, padding=1),
-            nn.BatchNorm2d(16),
+
+        self.encoder = nn.Sequential(
+            nn.Conv2d(1, 32, kernel_size=(3, 3), padding=(1, 1)),
+            nn.BatchNorm2d(32),
             nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2)
-        )
-        self.residual_blocks = nn.Sequential(
-            ResidualConvolutionalBlock(16, 32),
-            nn.MaxPool2d(kernel_size=2),
-            ResidualConvolutionalBlock(32, 64),
-            nn.MaxPool2d(kernel_size=2)
-        )
-        self.global_pooling = nn.AdaptiveAvgPool2d((1, 1))
-        self.classifier = nn.Sequential(
-            nn.Flatten(),
-            nn.Dropout(0.3),
-            nn.Linear(64, 1)
+            nn.MaxPool2d(kernel_size=(2, 2)),
+
+            nn.Conv2d(32, 64, kernel_size=(3, 3), padding=(1, 1)),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=(2, 2))  # [B, 64, freq', time']
         )
 
-    def forward(self, input_tensor):
-        x = self.input_block(input_tensor)
-        x = self.residual_blocks(x)
-        x = self.global_pooling(x)
-        x = self.classifier(x)
-        return x
+        # GRU input : (batch, time, features)
+        self.gru_input_size = 64 * 22  # from 90 → 45 → 22 freq bins
+
+        self.temporal_gru = nn.GRU(
+            input_size=self.gru_input_size,
+            hidden_size=64,
+            num_layers=1,
+            batch_first=True,
+            bidirectional=True
+        )
+
+        self.classifier = nn.Sequential(
+            nn.Dropout(0.3),
+            nn.Linear(64 * 2, 1)
+        )
+
+    def forward(self, x):
+        x = self.encoder(x)  # [B, 64, freq, time]
+        b, c, f, t = x.shape
+        x = x.permute(0, 3, 1, 2)  # [B, time, channels, freq]
+        x = x.reshape(b, t, -1)    # [B, time, features]
+        x, _ = self.temporal_gru(x)
+        x = x.mean(dim=1)
+        return self.classifier(x)

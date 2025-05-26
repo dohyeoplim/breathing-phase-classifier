@@ -8,9 +8,9 @@ from sklearn.model_selection import train_test_split
 from sklearn.utils.class_weight import compute_class_weight
 
 from src.dataset import BreathingAudioDataset
-from src.model import ResidualNetworkForBreathingAudio
+from src.model import Model
 
-from src.utils import (
+from src.utils.display import (
     print_start,
     print_epoch_summary,
     print_validation_accuracy,
@@ -63,10 +63,10 @@ def train_model():
     train_data_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
     validation_data_loader = DataLoader(validation_dataset, batch_size=32)
 
-    model = ResidualNetworkForBreathingAudio().to(device)
+    model = Model().to(device)
     loss_function = nn.BCEWithLogitsLoss(pos_weight=positive_class_weight)
     optimizer = optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-4)
-
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="max", factor=0.5, patience=2)
     os.makedirs("models", exist_ok=True)
     best_validation_accuracy = 0.0
     early_stopping_patience = 3
@@ -91,6 +91,7 @@ def train_model():
         print_epoch_summary(epoch_index, average_loss)
 
         validation_accuracy = evaluate_model(model, validation_data_loader)
+        scheduler.step(validation_accuracy)
 
         if validation_accuracy > best_validation_accuracy:
             best_validation_accuracy = validation_accuracy
