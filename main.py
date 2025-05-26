@@ -4,7 +4,7 @@ from src.infer import predict_model
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=["train", "predict"], help="Mode to run: train | predict")
+    parser.add_argument("mode", choices=["train", "predict"], help="train | predict")
     args = parser.parse_args()
 
     if args.mode == "train":
