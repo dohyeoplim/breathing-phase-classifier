@@ -66,8 +66,7 @@ def train_model():
     model = ResidualNetworkForBreathingAudio().to(device)
     loss_function = nn.BCEWithLogitsLoss(pos_weight=positive_class_weight)
     optimizer = optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-4)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="max", factor=0.5, patience=2, verbose=True)
-
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="max", factor=0.5, patience=2)
     os.makedirs("models", exist_ok=True)
     best_validation_accuracy = 0.0
     early_stopping_patience = 3
