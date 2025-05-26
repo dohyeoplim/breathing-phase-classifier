@@ -57,7 +57,7 @@ class ResidualNetworkForBreathingAudio(nn.Module):
             nn.Conv2d(1, 16, kernel_size=3, padding=1),
             nn.BatchNorm2d(16),
             nn.ReLU(inplace=True),
-            nn.Dropout2d(0.2),
+            nn.Dropout2d(0.1),
             nn.MaxPool2d(kernel_size=2)
         )
 
@@ -74,7 +74,7 @@ class ResidualNetworkForBreathingAudio(nn.Module):
         )
 
         self.classifier = nn.Sequential(
-            nn.Dropout(0.3),
+            nn.Dropout(0.1),
             nn.Linear(128, 1)
         )
 
