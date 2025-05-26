@@ -7,87 +7,100 @@ from torch import nn, optim
 from sklearn.model_selection import train_test_split
 from sklearn.utils.class_weight import compute_class_weight
 
-from src.dataset import BreathingDataset
-from src.model import ResNetMiniSE
+from src.dataset import BreathingAudioDataset
+from src.model import ResidualNetworkForBreathingAudio
 
-def spec_augment(spec, freq_mask_param=8, time_mask_param=12, num_mask=2):
-    spec = spec.copy()
-    for _ in range(num_mask):
-        f = np.random.randint(0, freq_mask_param)
-        f0 = np.random.randint(0, spec.shape[0] - f)
-        spec[f0:f0+f, :] = 0
-        t = np.random.randint(0, time_mask_param)
-        t0 = np.random.randint(0, spec.shape[1] - t)
-        spec[:, t0:t0+t] = 0
-    return spec
+from src.utils import (
+    print_start,
+    print_epoch_summary,
+    print_validation_accuracy,
+    print_success,
+    print_warning,
+    print_error,
+    progress_bar
+)
 
 device = torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
 
-def evaluate(model, val_loader):
+def evaluate_model(model, validation_data_loader):
     model.eval()
-    correct, total = 0, 0
-    all_probs = []
+    total_correct = 0
+    total_samples = 0
+    predicted_probabilities = []
+
     with torch.no_grad():
-        for x, y in val_loader:
-            x, y = x.to(device), y.to(device)
-            out = model(x)
-            probs = torch.sigmoid(out)
-            preds = (probs > 0.5).int().squeeze()
-            all_probs.extend(probs.squeeze().tolist())
-            correct += (preds == y).sum().item()
-            total += y.size(0)
-    acc = correct / total
-    print(f"✅ Validation Accuracy: {acc:.4f} | Prob range: {min(all_probs):.3f}–{max(all_probs):.3f}")
-    return acc
+        for features, labels in validation_data_loader:
+            features, labels = features.to(device), labels.to(device)
+            outputs = model(features)
+            probabilities = torch.sigmoid(outputs)
+            predictions = (probabilities > 0.5).int().squeeze()
+            predicted_probabilities.extend(probabilities.squeeze().tolist())
+            total_correct += (predictions == labels).sum().item()
+            total_samples += labels.size(0)
+
+    accuracy = total_correct / total_samples
+    min_prob = min(predicted_probabilities)
+    max_prob = max(predicted_probabilities)
+    print_validation_accuracy(accuracy, min_prob, max_prob)
+    return accuracy
+
 
 def train_model():
-    print("🚀 Training started...")
+    print_start("Training")
 
-    df = pd.read_csv("input/train.csv")
-    y_numeric = df["Target"].map(lambda x: 1 if x == "E" else 0)
-    class_weights = compute_class_weight("balanced", classes=np.array([0, 1]), y=y_numeric)
-    pos_weight = torch.tensor(class_weights[1], dtype=torch.float).to(device)
+    dataframe = pd.read_csv("input/train.csv")
+    numeric_labels = dataframe["Target"].map(lambda label: 1 if label == "E" else 0)
+    class_weights = compute_class_weight(class_weight="balanced", classes=np.array([0, 1]), y=numeric_labels)
+    positive_class_weight = torch.tensor(class_weights[1], dtype=torch.float).to(device)
 
-    train_df, val_df = train_test_split(df, test_size=0.2, stratify=df["Target"], random_state=42)
+    train_dataframe, validation_dataframe = train_test_split(
+        dataframe, test_size=0.2, stratify=dataframe["Target"], random_state=42
+    )
 
-    train_dataset = BreathingDataset(train_df, "input/train", is_train=True)
-    train_dataset.spec_transform = spec_augment
-    val_dataset = BreathingDataset(val_df, "input/train", is_train=True)
+    train_dataset = BreathingAudioDataset(train_dataframe, "input/train", is_training=True)
+    validation_dataset = BreathingAudioDataset(validation_dataframe, "input/train", is_training=True)
 
-    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=32)
+    train_data_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+    validation_data_loader = DataLoader(validation_dataset, batch_size=32)
 
-    model = ResNetMiniSE().to(device)
-    criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+    model = ResidualNetworkForBreathingAudio().to(device)
+    loss_function = nn.BCEWithLogitsLoss(pos_weight=positive_class_weight)
     optimizer = optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-4)
 
     os.makedirs("models", exist_ok=True)
-    best_acc = 0.0
-    patience, counter = 3, 0
+    best_validation_accuracy = 0.0
+    early_stopping_patience = 3
+    early_stopping_counter = 0
 
-    for epoch in range(1, 31):
+    for epoch_index in range(1, 31):
         model.train()
         total_loss = 0.0
-        for x, y in train_loader:
-            x, y = x.to(device), y.float().unsqueeze(1).to(device)
+        progress = progress_bar(train_data_loader, description=f"📦 Epoch {epoch_index}")
+
+        for features, labels in progress:
+            features, labels = features.to(device), labels.float().unsqueeze(1).to(device)
             optimizer.zero_grad()
-            out = model(x)
-            loss = criterion(out, y)
+            outputs = model(features)
+            loss = loss_function(outputs, labels)
             loss.backward()
             optimizer.step()
             total_loss += loss.item()
+            progress.set_postfix({"Loss": f"{loss.item():.4f}"})
 
-        print(f"📘 Epoch {epoch}: Train Loss = {total_loss / len(train_loader):.4f}")
-        val_acc = evaluate(model, val_loader)
+        average_loss = total_loss / len(train_data_loader)
+        print_epoch_summary(epoch_index, average_loss)
 
-        if val_acc > best_acc:
-            best_acc = val_acc
+        validation_accuracy = evaluate_model(model, validation_data_loader)
+
+        if validation_accuracy > best_validation_accuracy:
+            best_validation_accuracy = validation_accuracy
             torch.save(model.state_dict(), "models/best_model.pth")
-            print("💾 Best model saved.")
-            counter = 0
+            print_success("Best model saved.")
+            early_stopping_counter = 0
         else:
-            counter += 1
-            if counter >= patience:
-                print(f"⏹️ Early stopping triggered. Best Val Acc: {best_acc:.4f}")
+            early_stopping_counter += 1
+            if early_stopping_counter >= early_stopping_patience:
+                print_warning(f"⏹️ Early stopping. Best Validation Accuracy: {best_validation_accuracy:.4f}")
                 break
-        torch.save(model.state_dict(), f"models/model_epoch{epoch}.pth")
+
+        torch.save(model.state_dict(), f"models/model_epoch{epoch_index}.pth")

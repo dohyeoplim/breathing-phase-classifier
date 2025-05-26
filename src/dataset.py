@@ -5,54 +5,49 @@ import numpy as np
 import os
 import re
 
-def reconstruct_filename(name: str) -> str:
-    return re.sub(r'_(E|I)_', '_', name) + '.wav'
+from src.utils.normalize import normalize_to_target_root_mean_square, normalize_feature_matrix
+from src.utils.augment import apply_random_volume_gain
 
-class BreathingDataset(Dataset):
-    def __init__(self, csv, data_dir, is_train=True, transform=None, sr=16000, duration=3):
-        self.data = csv
-        self.data_dir = data_dir
-        self.is_train = is_train
+def reconstruct_audio_filename(identifier: str) -> str:
+    return re.sub(r'_(E|I)_', '_', identifier) + '.wav'
+
+class BreathingAudioDataset(Dataset):
+    def __init__(self, data_frame, data_directory, is_training=True, transform=None, sampling_rate=16000, duration_in_seconds=1):
+        self.data = data_frame
+        self.data_directory = data_directory
+        self.is_training = is_training
         self.transform = transform
-        self.sr = sr
-        self.duration = duration
-        self.length = sr * duration
+        self.sampling_rate = sampling_rate
+        self.expected_length = sampling_rate * duration_in_seconds
 
     def __len__(self):
         return len(self.data)
 
-    def __getitem__(self, idx):
-        row = self.data.iloc[idx]
-        if self.is_train:
-            file_name = reconstruct_filename(row['ID'])
-        else:
-            file_name = row['ID']
+    def __getitem__(self, index):
+        row = self.data.iloc[index]
+        file_name = reconstruct_audio_filename(row['ID']) if self.is_training else row['ID']
+        file_path = os.path.join(self.data_directory, file_name)
+        waveform, actual_sampling_rate = librosa.load(file_path, sr=self.sampling_rate)
 
-        file_path = os.path.join(self.data_dir, file_name)
-        y, sr = librosa.load(file_path, sr=self.sr)
+        waveform = normalize_to_target_root_mean_square(waveform)
 
-        if len(y) < self.length:
-            y = np.pad(y, (0, self.length - len(y)))
-        else:
-            y = y[:self.length]
+        if self.is_training:
+            waveform = apply_random_volume_gain(waveform)
 
-        if self.transform:
-            y = self.transform(y)
+        mel_spectrogram = librosa.feature.melspectrogram(y=waveform, sr=actual_sampling_rate, n_mels=64)
+        mel_spectrogram_decibel = librosa.power_to_db(mel_spectrogram, ref=np.max)
+        mel_spectrogram_decibel = normalize_feature_matrix(mel_spectrogram_decibel)
 
-        # Mel + MFCC
-        mel = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=64)
-        mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=20)
+        mel_frequency_cepstral_coefficients = librosa.feature.mfcc(y=waveform, sr=actual_sampling_rate, n_mfcc=20)
+        mel_frequency_cepstral_coefficients_normalized = normalize_feature_matrix(mel_frequency_cepstral_coefficients)
 
-        mel_db = librosa.power_to_db(mel, ref=np.max)
-        mfcc_norm = (mfcc - np.mean(mfcc)) / np.std(mfcc)
+        mel_tensor = torch.tensor(mel_spectrogram_decibel).float()
+        mfcc_tensor = torch.tensor(mel_frequency_cepstral_coefficients_normalized).float()
 
-        mel_tensor = torch.tensor(mel_db).float()
-        mfcc_tensor = torch.tensor(mfcc_norm).float()
+        combined_input_tensor = torch.cat([mel_tensor, mfcc_tensor], dim=0).unsqueeze(0)  # Shape: [1, Channels, Time]
 
-        x = torch.cat([mel_tensor, mfcc_tensor], dim=0).unsqueeze(0)
-
-        if self.is_train:
+        if self.is_training:
             label = 1 if row['Target'] == 'E' else 0
-            return x, torch.tensor(label, dtype=torch.float32)
+            return combined_input_tensor, torch.tensor(label, dtype=torch.float32)
         else:
-            return x, row['ID']
+            return combined_input_tensor, row['ID']
