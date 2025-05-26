@@ -5,6 +5,17 @@
 - 원송원(24102401)
 
 
+**Training:**
+```bash
+python main.py train
+```
+
+**Predicting with the Best Model:**
+```bash
+python main.py predict
+```
+
+
 # Dataset Description
 
 ## 제공되는 파일 📁
@@ -35,3 +46,4 @@
 
 - test.csv
   - ID: 예측해야 할 오디오 파일의 고유 식별자입니다.
+ 
