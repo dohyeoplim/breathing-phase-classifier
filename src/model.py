@@ -1,72 +1,73 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+import torch.nn.functional as functional
 
-class SEBlock(nn.Module):
-    def __init__(self, channels, reduction=8):
+class SqueezeExcitationBlock(nn.Module):
+    def __init__(self, number_of_channels: int, reduction_ratio: int = 8):
         super().__init__()
-        self.pool = nn.AdaptiveAvgPool2d(1)
-        self.fc = nn.Sequential(
-            nn.Linear(channels, channels // reduction),
+        self.global_pool = nn.AdaptiveAvgPool2d(1)
+        self.channel_mixing = nn.Sequential(
+            nn.Linear(number_of_channels, number_of_channels // reduction_ratio),
             nn.ReLU(),
-            nn.Linear(channels // reduction, channels),
+            nn.Linear(number_of_channels // reduction_ratio, number_of_channels),
             nn.Sigmoid()
         )
 
-    def forward(self, x):
-        b, c, _, _ = x.size()
-        s = self.pool(x).view(b, c)
-        s = self.fc(s).view(b, c, 1, 1)
-        return x * s
+    def forward(self, input_tensor):
+        batch_size, channels, _, _ = input_tensor.size()
+        squeeze = self.global_pool(input_tensor).view(batch_size, channels)
+        excitation = self.channel_mixing(squeeze).view(batch_size, channels, 1, 1)
+        return input_tensor * excitation
 
 
-class ResidualBlock(nn.Module):
-    def __init__(self, in_channels, out_channels):
+class ResidualConvolutionalBlock(nn.Module):
+    def __init__(self, input_channels: int, output_channels: int):
         super().__init__()
-        self.conv = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, 3, padding=1),
-            nn.BatchNorm2d(out_channels),
+        self.convolutional_sequence = nn.Sequential(
+            nn.Conv2d(input_channels, output_channels, kernel_size=3, padding=1),
+            nn.BatchNorm2d(output_channels),
             nn.ReLU(),
-            nn.Conv2d(out_channels, out_channels, 3, padding=1),
-            nn.BatchNorm2d(out_channels)
+            nn.Conv2d(output_channels, output_channels, kernel_size=3, padding=1),
+            nn.BatchNorm2d(output_channels)
         )
-        self.downsample = None
-        if in_channels != out_channels:
-            self.downsample = nn.Conv2d(in_channels, out_channels, kernel_size=1)
-        self.relu = nn.ReLU()
-        self.se = SEBlock(out_channels)
+        self.identity_projection = None
+        if input_channels != output_channels:
+            self.identity_projection = nn.Conv2d(input_channels, output_channels, kernel_size=1)
+        self.activation = nn.ReLU()
+        self.attention_block = SqueezeExcitationBlock(output_channels)
 
-    def forward(self, x):
-        identity = x if self.downsample is None else self.downsample(x)
-        out = self.conv(x)
-        out = self.se(out)
-        return self.relu(out + identity)
+    def forward(self, input_tensor):
+        identity = input_tensor if self.identity_projection is None else self.identity_projection(input_tensor)
+        output = self.convolutional_sequence(input_tensor)
+        output = self.attention_block(output)
+        return self.activation(output + identity)
 
 
-class ResNetMiniSE(nn.Module):
+class ResidualNetworkForBreathingAudio(nn.Module):
     def __init__(self):
         super().__init__()
-        self.stem = nn.Sequential(
-            nn.Conv2d(1, 16, kernel_size=3, padding=1),
+        self.input_block = nn.Sequential(
+            nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, padding=1),
             nn.BatchNorm2d(16),
             nn.ReLU(),
-            nn.MaxPool2d(2)
+            nn.MaxPool2d(kernel_size=2)
         )
-        self.res_blocks = nn.Sequential(
-            ResidualBlock(16, 32),
-            nn.MaxPool2d(2),
-            ResidualBlock(32, 64),
-            nn.MaxPool2d(2)
+        self.residual_blocks = nn.Sequential(
+            ResidualConvolutionalBlock(16, 32),
+            nn.MaxPool2d(kernel_size=2),
+            ResidualConvolutionalBlock(32, 64),
+            nn.MaxPool2d(kernel_size=2)
         )
-        self.pool = nn.AdaptiveAvgPool2d((1, 1))
+        self.global_pooling = nn.AdaptiveAvgPool2d((1, 1))
         self.classifier = nn.Sequential(
             nn.Flatten(),
             nn.Dropout(0.3),
             nn.Linear(64, 1)
         )
 
-    def forward(self, x):
-        x = self.stem(x)
-        x = self.res_blocks(x)
-        x = self.pool(x)
-        return self.classifier(x)
+    def forward(self, input_tensor):
+        x = self.input_block(input_tensor)
+        x = self.residual_blocks(x)
+        x = self.global_pooling(x)
+        x = self.classifier(x)
+        return x
