@@ -12,15 +12,26 @@ def apply_random_gain(y, min_gain=0.7, max_gain=1.3):
 
 def apply_time_stretch(y, rate_range=(0.9, 1.1)):
     rate = np.random.uniform(*rate_range)
-    return librosa.effects.time_stretch(y, rate)
+    try:
+        stft = librosa.stft(y)
+        stft_stretched = librosa.effects.time_stretch(stft, rate)
+        y_stretched = librosa.istft(stft_stretched)
+        return y_stretched
+    except Exception:
+        return y
 
 def apply_pitch_shift(y, sr, semitone_range=(-2, 2)):
-    n_steps = np.random.uniform(*semitone_range)
-    return librosa.effects.pitch_shift(y, sr=sr, n_steps=n_steps)
+    try:
+        n_steps = np.random.uniform(*semitone_range)
+        return librosa.effects.pitch_shift(y, sr=sr, n_steps=n_steps)
+    except Exception:
+        return y
 
 def apply_random_bandpass(y, sr, low_hz=300, high_hz=3000):
-    low = np.random.uniform(low_hz, sr // 4)
-    high = np.random.uniform(sr // 4, high_hz)
+    low = np.random.uniform(low_hz, sr // 2 - 100)
+    high = np.random.uniform(low + 50, min(high_hz, sr // 2 - 10))
+    if low >= high:
+        return y
     b, a = scipy.signal.butter(2, [low / (sr / 2), high / (sr / 2)], btype='band')
     return scipy.signal.lfilter(b, a, y)
 
@@ -35,4 +46,5 @@ def augment_signal(y, sr):
         y = apply_pitch_shift(y, sr)
     if np.random.rand() < 0.3:
         y = apply_random_bandpass(y, sr)
-    return y
+
+    return np.clip(y, -1.0, 1.0)
