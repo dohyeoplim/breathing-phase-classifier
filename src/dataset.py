@@ -7,6 +7,7 @@ from torch.utils.data import Dataset
 
 from src.utils.normalize import normalize_to_target_root_mean_square, normalize_feature_matrix
 from src.utils.audio_augment import augment_signal
+from src.utils.feature_extractions import extract_aux_features
 
 
 def reconstruct_audio_filename(identifier: str) -> str:
@@ -72,5 +73,12 @@ class BreathingAudioDataset(Dataset):
         mel_tensor = torch.tensor(mel_db).float()
         mfcc_tensor = torch.tensor(mfcc_norm).float()
 
-        combined = torch.cat([mel_tensor, mfcc_tensor], dim=0).unsqueeze(0)
-        return combined
+        combined = torch.cat([mel_tensor, mfcc_tensor], dim=0).unsqueeze(0)  # [1, 84, T]
+
+        aux_features = extract_aux_features(waveform, self.sampling_rate)  # (6,)
+        aux_tensor = torch.tensor(aux_features).float().unsqueeze(0).unsqueeze(2)  # [1, 6, 1]
+
+        aux_expanded = aux_tensor.expand(-1, -1, combined.shape[2])  # [1, 6, T]
+
+        full_tensor = torch.cat([combined, aux_expanded], dim=1)  # [1, 90, T]
+        return full_tensor
