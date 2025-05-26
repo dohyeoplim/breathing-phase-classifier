@@ -6,7 +6,7 @@ import os
 import re
 
 from src.utils.normalize import normalize_to_target_root_mean_square, normalize_feature_matrix
-from src.utils.augment import apply_random_volume_gain
+from src.utils.audio_augment import augment_signal
 
 def reconstruct_audio_filename(identifier: str) -> str:
     return re.sub(r'_(E|I)_', '_', identifier) + '.wav'
@@ -32,7 +32,7 @@ class BreathingAudioDataset(Dataset):
         waveform = normalize_to_target_root_mean_square(waveform)
 
         if self.is_training:
-            waveform = apply_random_volume_gain(waveform)
+            waveform = augment_signal(waveform, self.sampling_rate)
 
         mel_spectrogram = librosa.feature.melspectrogram(y=waveform, sr=actual_sampling_rate, n_mels=64)
         mel_spectrogram_decibel = librosa.power_to_db(mel_spectrogram, ref=np.max)

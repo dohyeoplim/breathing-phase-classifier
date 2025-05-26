@@ -8,7 +8,7 @@ from rich.console import Console
 from src.dataset import BreathingAudioDataset
 from src.model import ResidualNetworkForBreathingAudio
 
-from src.utils import (
+from src.utils.display import (
     print_start,
     print_success,
     print_error,

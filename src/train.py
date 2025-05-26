@@ -10,7 +10,7 @@ from sklearn.utils.class_weight import compute_class_weight
 from src.dataset import BreathingAudioDataset
 from src.model import ResidualNetworkForBreathingAudio
 
-from src.utils import (
+from src.utils.display import (
     print_start,
     print_epoch_summary,
     print_validation_accuracy,
