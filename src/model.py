@@ -8,7 +8,7 @@ class SqueezeExcitationBlock(nn.Module):
         self.global_pool = nn.AdaptiveAvgPool2d(1)
         self.channel_mixing = nn.Sequential(
             nn.Linear(number_of_channels, number_of_channels // reduction_ratio),
-            nn.ReLU(),
+            nn.ReLU(inplace=True),
             nn.Linear(number_of_channels // reduction_ratio, number_of_channels),
             nn.Sigmoid()
         )
@@ -21,56 +21,68 @@ class SqueezeExcitationBlock(nn.Module):
 
 
 class ResidualConvolutionalBlock(nn.Module):
-    def __init__(self, input_channels: int, output_channels: int, dropout_rate: float = 0.2):
+    def __init__(self, in_channels: int, out_channels: int, dropout_rate: float = 0.2):
         super().__init__()
-        self.convolutional_sequence = nn.Sequential(
-            nn.Conv2d(input_channels, output_channels, kernel_size=3, padding=1),
-            nn.BatchNorm2d(output_channels),
-            nn.ReLU(),
+        self.use_projection = in_channels != out_channels
+
+        self.block = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
             nn.Dropout2d(dropout_rate),
-            nn.Conv2d(output_channels, output_channels, kernel_size=3, padding=1),
-            nn.BatchNorm2d(output_channels),
-            nn.ReLU(),
+            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
             nn.Dropout2d(dropout_rate)
         )
-        self.identity_projection = None
-        if input_channels != output_channels:
-            self.identity_projection = nn.Conv2d(input_channels, output_channels, kernel_size=1)
-        self.attention_block = SqueezeExcitationBlock(output_channels)
 
-    def forward(self, input_tensor):
-        identity = input_tensor if self.identity_projection is None else self.identity_projection(input_tensor)
-        output = self.convolutional_sequence(input_tensor)
-        output = self.attention_block(output)
-        return output + identity
+        self.attention = SqueezeExcitationBlock(out_channels)
+
+        if self.use_projection:
+            self.shortcut = nn.Conv2d(in_channels, out_channels, kernel_size=1)
+        else:
+            self.shortcut = nn.Identity()
+
+    def forward(self, x):
+        identity = self.shortcut(x)
+        out = self.block(x)
+        out = self.attention(out)
+        return out + identity
 
 
 class ResidualNetworkForBreathingAudio(nn.Module):
     def __init__(self):
         super().__init__()
-        self.input_block = nn.Sequential(
-            nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, padding=1),
+        self.stem = nn.Sequential(
+            nn.Conv2d(1, 16, kernel_size=3, padding=1),
             nn.BatchNorm2d(16),
-            nn.ReLU(),
+            nn.ReLU(inplace=True),
             nn.Dropout2d(0.2),
             nn.MaxPool2d(kernel_size=2)
         )
-        self.residual_blocks = nn.Sequential(
-            ResidualConvolutionalBlock(16, 32),
+
+        self.residual_layers = nn.Sequential(
+            ResidualConvolutionalBlock(16, 32, dropout_rate=0.2),
             nn.MaxPool2d(kernel_size=2),
-            ResidualConvolutionalBlock(32, 64),
+            ResidualConvolutionalBlock(32, 64, dropout_rate=0.2),
             nn.MaxPool2d(kernel_size=2)
         )
-        self.global_pooling = nn.AdaptiveAvgPool2d((1, 1))
-        self.classifier = nn.Sequential(
-            nn.Flatten(),
-            nn.Dropout(0.3),
-            nn.Linear(64, 1)
+
+        self.temporal_gru = nn.GRU(
+            input_size=64, hidden_size=64,
+            num_layers=1, batch_first=True, bidirectional=True
         )
 
-    def forward(self, input_tensor):
-        x = self.input_block(input_tensor)
-        x = self.residual_blocks(x)
-        x = self.global_pooling(x)
-        x = self.classifier(x)
-        return x
+        self.classifier = nn.Sequential(
+            nn.Dropout(0.3),
+            nn.Linear(128, 1)
+        )
+
+    def forward(self, x):
+        x = self.stem(x)
+        x = self.residual_layers(x)
+        x = x.mean(dim=2)
+        x = x.permute(0, 2, 1)
+        x, _ = self.temporal_gru(x)
+        x = x.mean(dim=1)
+        return self.classifier(x)
