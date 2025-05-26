@@ -8,7 +8,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.utils.class_weight import compute_class_weight
 
 from src.dataset import BreathingAudioDataset
-from src.model import ResidualNetworkForBreathingAudio
+from src.model import Model
 
 from src.utils.display import (
     print_start,
@@ -63,7 +63,7 @@ def train_model():
     train_data_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
     validation_data_loader = DataLoader(validation_dataset, batch_size=32)
 
-    model = ResidualNetworkForBreathingAudio().to(device)
+    model = Model().to(device)
     loss_function = nn.BCEWithLogitsLoss(pos_weight=positive_class_weight)
     optimizer = optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-4)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="max", factor=0.5, patience=2)

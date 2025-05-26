@@ -6,7 +6,7 @@ from tqdm import tqdm
 from rich.console import Console
 
 from src.dataset import BreathingAudioDataset
-from src.model import ResidualNetworkForBreathingAudio
+from src.model import Model
 
 from src.utils.display import (
     print_start,
@@ -24,7 +24,7 @@ def predict_model():
     test_dataset = BreathingAudioDataset(test_dataframe, "input/test", is_training=False)
     test_data_loader = DataLoader(test_dataset, batch_size=32)
 
-    model = ResidualNetworkForBreathingAudio().to(device)
+    model = Model().to(device)
     model_path = "models/best_model.pth"
 
     if not os.path.exists(model_path):
