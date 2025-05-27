@@ -25,3 +25,9 @@ def print_warning(message: str):
 
 def print_error(message: str):
     console.print(f"[bold red]❌ {message}[/bold red]")
+
+def count_parameters(model):
+    total = sum(p.numel() for p in model.parameters())
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    console.print(f"[bold purple]🦄 총 파라미터: {total:,}[/bold purple]")
+    console.print(f"[bold purple]🦄 학습 파라미터: {trainable:,}[/bold purple]")

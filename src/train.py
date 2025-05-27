@@ -7,7 +7,7 @@ from torch import nn, optim
 from sklearn.model_selection import train_test_split
 from sklearn.utils.class_weight import compute_class_weight
 
-from src.dataset import BreathingAudioDataset
+from src.dataset import BreathingAudioDataset, breathing_collate_fn
 from src.model import Model
 
 from src.utils.display import (
@@ -17,7 +17,8 @@ from src.utils.display import (
     print_success,
     print_warning,
     print_error,
-    progress_bar
+    progress_bar,
+    count_parameters
 )
 
 device = torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
@@ -57,18 +58,20 @@ def train_model():
         dataframe, test_size=0.2, stratify=dataframe["Target"], random_state=42
     )
 
+    feature_type = "complex"
+
     train_dataset = BreathingAudioDataset(
         train_dataframe,
         "input/train",
         is_training=True,
-        feature_type='simple'
+        feature_type=feature_type,
     )
 
     validation_dataset = BreathingAudioDataset(
         validation_dataframe,
         "input/train",
         is_training=True,
-        feature_type='simple'
+        feature_type=feature_type,
     )
 
     train_data_loader = DataLoader(
@@ -77,6 +80,7 @@ def train_model():
         shuffle=True,
         num_workers=0,
         pin_memory=True,
+        collate_fn=breathing_collate_fn
     )
 
     validation_data_loader = DataLoader(
@@ -85,6 +89,7 @@ def train_model():
         shuffle=False,
         num_workers=0,
         pin_memory=True,
+        collate_fn=breathing_collate_fn
     )
 
 
@@ -96,6 +101,8 @@ def train_model():
     best_validation_accuracy = 0.0
     early_stopping_patience = 3
     early_stopping_counter = 0
+
+    count_parameters(model)
 
     for epoch_index in range(1, 31):
         model.train()

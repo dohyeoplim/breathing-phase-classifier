@@ -19,7 +19,7 @@ class BreathingAudioDataset(Dataset):
             transform=None,
             sampling_rate=16000,
             duration_in_seconds=1,
-            feature_type='simple'  # 'simple', 'medium', 'complex'
+            feature_type='simple'
     ):
         self.data = data_frame
         self.data_directory = data_directory
@@ -34,15 +34,8 @@ class BreathingAudioDataset(Dataset):
         self.bands = [(30, 723), (723, 883), (883, 1030)] # eda_2.py에서 나옴
 
     def _setup_feature_config(self):
-        if self.feature_type == 'simple':
-            self.n_mels = 64
-            self.n_mfcc = 13
-        elif self.feature_type == 'medium':
-            self.n_mels = 128
-            self.n_mfcc = 20
-        else:
-            self.n_mels = 128
-            self.n_mfcc = 20
+        self.n_mels = 64 if self.feature_type == 'simple' else 128
+        self.n_mfcc = 13 if self.feature_type == 'simple' else 20
 
     def __len__(self):
         return len(self.data)
@@ -69,12 +62,11 @@ class BreathingAudioDataset(Dataset):
         waveform, orig_sr = librosa.load(file_path, sr=None)
         if orig_sr != self.sampling_rate:
             waveform = librosa.resample(waveform, orig_sr=orig_sr, target_sr=self.sampling_rate)
-
+        if len(waveform) < self.expected_length:
+            waveform = np.pad(waveform, (0, self.expected_length - len(waveform)))
         waveform = self._normalize_audio(waveform)
-
-        if self.is_training:
+        if self.is_training and self.feature_type != 'complex':
             waveform = self._augment_audio(waveform)
-
         return waveform
 
     def _normalize_audio(self, waveform, target_rms=0.1):
@@ -85,8 +77,7 @@ class BreathingAudioDataset(Dataset):
         if np.random.rand() < 0.8:
             waveform *= np.random.uniform(0.8, 1.2)
         if np.random.rand() < 0.4:
-            noise = np.random.normal(0, 0.002, waveform.shape)
-            waveform += noise
+            waveform += np.random.normal(0, 0.002, waveform.shape)
         return np.clip(waveform, -1.0, 1.0)
 
     def _extract_features(self, waveform):
@@ -101,32 +92,20 @@ class BreathingAudioDataset(Dataset):
         mel = librosa.feature.melspectrogram(y=waveform, sr=self.sampling_rate, n_mels=self.n_mels)
         mel_db = librosa.power_to_db(mel, ref=np.max)
         mfcc = librosa.feature.mfcc(y=waveform, sr=self.sampling_rate, n_mfcc=self.n_mfcc)
-
-        mel_db = self._normalize(mel_db)
-        mfcc = self._normalize(mfcc)
-
-        features = np.vstack([mel_db, mfcc])
-        return torch.tensor(features, dtype=torch.float32).unsqueeze(0)
+        return torch.tensor(np.vstack([self._normalize(mel_db), self._normalize(mfcc)]), dtype=torch.float32).unsqueeze(0)
 
     def _extract_medium_features(self, waveform):
         mel = librosa.feature.melspectrogram(y=waveform, sr=self.sampling_rate, n_mels=self.n_mels)
         mel_db = librosa.power_to_db(mel, ref=np.max)
         mfcc = librosa.feature.mfcc(y=waveform, sr=self.sampling_rate, n_mfcc=self.n_mfcc)
-
-        spectral_centroid = librosa.feature.spectral_centroid(y=waveform, sr=self.sampling_rate)[0]
-        zcr = librosa.feature.zero_crossing_rate(waveform)[0]
-
-        mel_db = self._normalize(mel_db)
-        mfcc = self._normalize(mfcc)
-        spectral_centroid = self._normalize(spectral_centroid)
-        zcr = self._normalize(zcr)
-
-        features = np.vstack([
-            mel_db, mfcc,
-            spectral_centroid[np.newaxis, :],
+        centroid = self._normalize(librosa.feature.spectral_centroid(y=waveform, sr=self.sampling_rate)[0])
+        zcr = self._normalize(librosa.feature.zero_crossing_rate(y=waveform)[0])
+        return torch.tensor(np.vstack([
+            self._normalize(mel_db),
+            self._normalize(mfcc),
+            centroid[np.newaxis, :],
             zcr[np.newaxis, :]
-        ])
-        return torch.tensor(features, dtype=torch.float32).unsqueeze(0)
+        ]), dtype=torch.float32).unsqueeze(0)
 
     def _extract_complex_features(self, waveform):
         base = self._extract_medium_features(waveform)
@@ -135,36 +114,46 @@ class BreathingAudioDataset(Dataset):
         smooth_env = scipy.signal.savgol_filter(envelope, 301, polyorder=3)
         envelope_peak = np.max(smooth_env)
         envelope_slope = np.max(np.gradient(smooth_env))
-
-        rms = np.sqrt(np.mean(waveform**2))
         active_ratio = np.mean(np.abs(waveform) > 0.02)
 
         h, p = librosa.effects.hpss(waveform)
         harmonic_energy = np.mean(h**2)
         percussive_energy = np.mean(p**2)
 
+        # SNR estimate
+        signal_power = np.mean(waveform ** 2)
+        noise_power = np.var(waveform - smooth_env)
+        snr = 10 * np.log10(signal_power / (noise_power + 1e-8))
+
         band_energies = []
         for low, high in self.bands:
             sos = scipy.signal.butter(3, [low, high], btype='band', fs=self.sampling_rate, output='sos')
             filtered = scipy.signal.sosfilt(sos, waveform)
-            band_energy = np.sqrt(np.mean(filtered**2))
-            band_energies.append(band_energy)
+            band_energies.append(np.sqrt(np.mean(filtered**2)))
 
-        scalar_feats = [
-            rms, envelope_peak, envelope_slope,
+        scalar_feats = torch.tensor([
+            np.sqrt(np.mean(waveform**2)),
+            envelope_peak,
+            envelope_slope,
             active_ratio,
             *band_energies,
-            harmonic_energy, percussive_energy
-        ]
+            harmonic_energy,
+            percussive_energy,
+            snr
+        ], dtype=torch.float32)
 
-        scalar_tensor = torch.tensor(scalar_feats, dtype=torch.float32)
+        # Add temporal envelope feature
+        frame_env = self._normalize(librosa.feature.rms(y=waveform, frame_length=1024, hop_length=512)[0])
+        frame_env = torch.tensor(frame_env, dtype=torch.float32).unsqueeze(0)
+
+        base = torch.cat([base, frame_env.unsqueeze(0)], dim=1)
         T = base.shape[-1]
-        scalar_tensor = scalar_tensor.unsqueeze(0).expand(-1, T).unsqueeze(0)
-
-        return torch.cat([base, scalar_tensor], dim=1)
+        scalar_feats = scalar_feats.unsqueeze(1).expand(-1, T).unsqueeze(0)  # [1, 10, T]
+        return torch.cat([base, scalar_feats], dim=1)
 
     def _normalize(self, x):
         return (x - x.mean()) / (x.std() + 1e-8)
+
 
 def breathing_collate_fn(batch):
     if isinstance(batch[0][1], torch.Tensor):
