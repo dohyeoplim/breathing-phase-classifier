@@ -10,7 +10,6 @@ import scipy.signal
 
 warnings.filterwarnings('ignore')
 
-
 class BreathingAudioDataset(Dataset):
     def __init__(
             self,
@@ -32,6 +31,8 @@ class BreathingAudioDataset(Dataset):
         self.feature_type = feature_type
         self._setup_feature_config()
 
+        self.bands = [(30, 723), (723, 883), (883, 1030)] # eda_2.py에서 나옴
+
     def _setup_feature_config(self):
         if self.feature_type == 'simple':
             self.n_mels = 64
@@ -41,7 +42,7 @@ class BreathingAudioDataset(Dataset):
             self.n_mfcc = 20
         else:
             self.n_mels = 128
-            self.n_mfcc = 20  # still useful
+            self.n_mfcc = 20
 
     def __len__(self):
         return len(self.data)
@@ -129,36 +130,49 @@ class BreathingAudioDataset(Dataset):
 
     def _extract_complex_features(self, waveform):
         base = self._extract_medium_features(waveform)
-        breathing_feats = self._extract_fft_psd_features(waveform)
 
+        envelope = np.abs(scipy.signal.hilbert(waveform))
+        smooth_env = scipy.signal.savgol_filter(envelope, 301, polyorder=3)
+        envelope_peak = np.max(smooth_env)
+        envelope_slope = np.max(np.gradient(smooth_env))
+
+        rms = np.sqrt(np.mean(waveform**2))
+        active_ratio = np.mean(np.abs(waveform) > 0.02)
+
+        h, p = librosa.effects.hpss(waveform)
+        harmonic_energy = np.mean(h**2)
+        percussive_energy = np.mean(p**2)
+
+        band_energies = []
+        for low, high in self.bands:
+            sos = scipy.signal.butter(3, [low, high], btype='band', fs=self.sampling_rate, output='sos')
+            filtered = scipy.signal.sosfilt(sos, waveform)
+            band_energy = np.sqrt(np.mean(filtered**2))
+            band_energies.append(band_energy)
+
+        scalar_feats = [
+            rms, envelope_peak, envelope_slope,
+            active_ratio,
+            *band_energies,
+            harmonic_energy, percussive_energy
+        ]
+
+        scalar_tensor = torch.tensor(scalar_feats, dtype=torch.float32)
         T = base.shape[-1]
-        breathing_feats = breathing_feats.unsqueeze(0).expand(-1, T)
-        return torch.cat([base, breathing_feats.unsqueeze(0)], dim=1)
+        scalar_tensor = scalar_tensor.unsqueeze(0).expand(-1, T).unsqueeze(0)
 
-    def _extract_fft_psd_features(self, waveform):
-        # FFT magnitude spectrum
-        fft = np.abs(np.fft.rfft(waveform))[:128]
-        fft = self._normalize(fft)
-
-        # Power Spectral Density
-        freqs, psd = scipy.signal.welch(waveform, fs=self.sampling_rate)
-        psd = psd[:128]
-        psd = self._normalize(psd)
-
-        combined = np.concatenate([fft, psd])
-        return torch.tensor(combined, dtype=torch.float32)
+        return torch.cat([base, scalar_tensor], dim=1)
 
     def _normalize(self, x):
         return (x - x.mean()) / (x.std() + 1e-8)
 
-
 def breathing_collate_fn(batch):
-    if isinstance(batch[0][1], torch.Tensor):  # Training mode
+    if isinstance(batch[0][1], torch.Tensor):
         features, labels = zip(*batch)
         max_len = max(f.shape[-1] for f in features)
         features = [F.pad(f, (0, max_len - f.shape[-1])) for f in features]
         return torch.stack(features), torch.stack(labels)
-    else:  # Inference mode
+    else:
         features, ids = zip(*batch)
         max_len = max(f.shape[-1] for f in features)
         features = [F.pad(f, (0, max_len - f.shape[-1])) for f in features]
