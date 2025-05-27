@@ -57,11 +57,36 @@ def train_model():
         dataframe, test_size=0.2, stratify=dataframe["Target"], random_state=42
     )
 
-    train_dataset = BreathingAudioDataset(train_dataframe, "input/train", is_training=True)
-    validation_dataset = BreathingAudioDataset(validation_dataframe, "input/train", is_training=True)
+    train_dataset = BreathingAudioDataset(
+        train_dataframe,
+        "input/train",
+        is_training=True,
+        feature_type='simple'
+    )
 
-    train_data_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-    validation_data_loader = DataLoader(validation_dataset, batch_size=32)
+    validation_dataset = BreathingAudioDataset(
+        validation_dataframe,
+        "input/train",
+        is_training=True,
+        feature_type='simple'
+    )
+
+    train_data_loader = DataLoader(
+        train_dataset,
+        batch_size=32,
+        shuffle=True,
+        num_workers=0,
+        pin_memory=True,
+    )
+
+    validation_data_loader = DataLoader(
+        validation_dataset,
+        batch_size=64,
+        shuffle=False,
+        num_workers=0,
+        pin_memory=True,
+    )
+
 
     model = Model().to(device)
     loss_function = nn.BCEWithLogitsLoss(pos_weight=positive_class_weight)
