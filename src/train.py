@@ -10,6 +10,9 @@ from sklearn.utils.class_weight import compute_class_weight
 from src.dataset import BreathingAudioDataset, breathing_collate_fn
 from src.model import Model
 
+# import shap
+# import matplotlib.pyplot as plt
+
 from src.utils.display import (
     print_start,
     print_epoch_summary,
@@ -58,20 +61,17 @@ def train_model():
         dataframe, test_size=0.2, stratify=dataframe["Target"], random_state=42
     )
 
-    feature_type = "complex"
 
     train_dataset = BreathingAudioDataset(
         train_dataframe,
         "input/train",
         is_training=True,
-        feature_type=feature_type,
     )
 
     validation_dataset = BreathingAudioDataset(
         validation_dataframe,
         "input/train",
         is_training=True,
-        feature_type=feature_type,
     )
 
     train_data_loader = DataLoader(
@@ -137,3 +137,32 @@ def train_model():
                 break
 
         torch.save(model.state_dict(), f"models/model_epoch{epoch_index}.pth")
+
+        # print_start("SHAP Value Analysis")
+        #
+        # for features, labels in validation_data_loader:
+        #     features = features.to(device)
+        #     break
+        #
+        # model.eval()
+        # def model_forward(x):
+        #     return torch.sigmoid(model(x)).detach().cpu().numpy()
+        #
+        # background = features[:20].to(device)
+        # explainer = shap.DeepExplainer(model, background)
+        # shap_values = explainer.shap_values(features[:32])
+        #
+        # shap_array = np.abs(shap_values[0]).mean(axis=0).mean(axis=1)
+        #
+        # print("📊 SHAP Values:")
+        # for i, val in enumerate(shap_array):
+        #     print(f" - Channel {i:2d}: {val:.6f}")
+        #
+        # plt.figure(figsize=(10, 4))
+        # plt.bar(np.arange(len(shap_array)), shap_array)
+        # plt.title("Mean SHAP Value per Feature Channel")
+        # plt.xlabel("Feature Channel Index")
+        # plt.ylabel("Mean |SHAP|")
+        # plt.tight_layout()
+        # plt.savefig("shap_summary.png")
+        # plt.show()

@@ -4,8 +4,9 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from rich.console import Console
+from datetime import datetime
 
-from src.dataset import BreathingAudioDataset
+from src.dataset import BreathingAudioDataset, breathing_collate_fn
 from src.model import Model
 
 from src.utils.display import (
@@ -22,7 +23,12 @@ def predict_model():
 
     test_dataframe = pd.read_csv("input/test.csv")
     test_dataset = BreathingAudioDataset(test_dataframe, "input/test", is_training=False)
-    test_data_loader = DataLoader(test_dataset, batch_size=32)
+    test_data_loader = DataLoader(
+        test_dataset,
+        batch_size=32,
+        shuffle=False,
+        collate_fn=breathing_collate_fn
+    )
 
     model = Model().to(device)
     model_path = "models/best_model.pth"
@@ -48,6 +54,8 @@ def predict_model():
             predictions.extend(zip(identifiers, predicted_labels))
 
     os.makedirs("submissions", exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    submission_path = f"submissions/submission_{timestamp}.csv"
     submission_dataframe = pd.DataFrame(predictions, columns=["ID", "Target"])
-    submission_dataframe.to_csv("submissions/submission.csv", index=False)
-    print_success("submission.csv saved!")
+    submission_dataframe.to_csv(submission_path, index=False)
+    print_success(f"{submission_path} 저장 완료")
