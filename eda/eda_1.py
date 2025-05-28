@@ -8,8 +8,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from tqdm import tqdm
 
-CSV_PATH = "../input/train.csv"
-AUDIO_DIR = "../input/train"
+CSV_PATH = "input/train.csv"
+AUDIO_DIR = "input/train"
 SAMPLE_RATE = 16000
 MAX_SAMPLES = 500
 
