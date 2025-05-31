@@ -20,7 +20,7 @@ class BreathingAudioDataset(Dataset):
         self.sampling_rate = sampling_rate
         self.duration_in_seconds = duration_in_seconds
         self.expected_length = sampling_rate * duration_in_seconds
-        self.n_mels = 128
+        self.n_mels = 64
 
     def __len__(self):
         return len(self.data)
@@ -50,20 +50,39 @@ class BreathingAudioDataset(Dataset):
 
     def _extract_features(self, y):
         sr = self.sampling_rate
-        hop_length = 512  # Consistent hop length for all features
+        hop_length = 512
 
+        # Spectrogram (simplified)
         mel = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=self.n_mels, hop_length=hop_length)
         mel_db = librosa.power_to_db(mel, ref=np.max)
-        mel_db_norm = (mel_db - mel_db.mean()) / (mel_db.std() + 1e-8)
+        mel_db_norm = self._normalize(mel_db)
 
+        # Scalars: only high-importance features
         rms = librosa.feature.rms(y=y, hop_length=hop_length)[0]
         centroid = librosa.feature.spectral_centroid(y=y, sr=sr, hop_length=hop_length)[0]
         zcr = librosa.feature.zero_crossing_rate(y, hop_length=hop_length)[0]
+        flatness = librosa.feature.spectral_flatness(y=y)[0]
 
-        temporal_features = self._extract_temporal_features(y, rms, centroid, zcr)
-        spectral_features = self._extract_spectral_features(y)
+        # Spectral entropy
+        mel_norm = mel / (mel.sum(axis=0, keepdims=True) + 1e-8)
+        entropy_per_frame = -np.sum(mel_norm * np.log1p(mel_norm), axis=0)
+        entropy_mel = np.mean(entropy_per_frame)
 
-        scalars = np.concatenate([temporal_features, spectral_features])
+        # PSD band energy (low only)
+        freqs, psd = scipy.signal.welch(y, sr, nperseg=512)
+        idx_low = np.logical_and(freqs >= 20, freqs < 500)
+        psd_low = np.trapezoid(psd[idx_low], freqs[idx_low])
+
+        scalars = np.array([
+            np.mean(rms),
+            np.std(rms),
+            np.mean(centroid),
+            np.std(centroid),
+            np.std(zcr),
+            np.mean(flatness),
+            entropy_mel,
+            psd_low
+        ], dtype=np.float32)
 
         feature_stack = np.vstack([
             mel_db_norm,
@@ -77,55 +96,12 @@ class BreathingAudioDataset(Dataset):
             "scalars": torch.tensor(scalars, dtype=torch.float32)
         }
 
-    def _extract_temporal_features(self, y, rms, centroid, zcr):
-        envelope = np.abs(scipy.signal.hilbert(y))
-        peak_idx = np.argmax(envelope)
-        peak_time_ratio = peak_idx / len(y)
-
-        rise_time = peak_idx / self.sampling_rate
-        fall_time = (len(y) - peak_idx) / self.sampling_rate
-
-        rms_slope = np.polyfit(np.arange(len(rms)), rms, deg=1)[0]
-        centroid_slope = np.polyfit(np.arange(len(centroid)), centroid, deg=1)[0]
-
-        return np.array([
-            np.mean(rms), np.std(rms), rms_slope,
-            np.mean(centroid), np.std(centroid), centroid_slope,
-            np.mean(zcr), np.std(zcr),
-            peak_time_ratio, rise_time, fall_time,
-            scipy.stats.skew(y), scipy.stats.kurtosis(y)
-        ], dtype=np.float32)
-
-    def _extract_spectral_features(self, y):
-        sr = self.sampling_rate
-
-        bandwidth = librosa.feature.spectral_bandwidth(y=y, sr=sr)[0]
-        rolloff = librosa.feature.spectral_rolloff(y=y, sr=sr)[0]
-        contrast = librosa.feature.spectral_contrast(y=y, sr=sr)
-
-        freqs, psd = scipy.signal.welch(y, sr, nperseg=512)
-        total_power = np.trapezoid(psd, freqs)
-
-        bands = [(20, 500), (500, 2000), (2000, 8000)]
-        band_powers = []
-        for fmin, fmax in bands:
-            idx = np.logical_and(freqs >= fmin, freqs < fmax)
-            power = np.trapezoid(psd[idx], freqs[idx]) / total_power
-            band_powers.append(power)
-
-        return np.array([
-            np.mean(bandwidth), np.std(bandwidth),
-            np.mean(rolloff), np.std(rolloff),
-            np.mean(contrast), np.std(contrast),
-            *band_powers
-        ], dtype=np.float32)
-
     def _normalize(self, x):
         return (x - np.mean(x)) / (np.std(x) + 1e-8)
 
+
 def breathing_collate_fn(batch):
     features, scalars, labels_or_ids = [], [], []
-
     for x, y in batch:
         features.append(x["features"])
         scalars.append(x["scalars"])

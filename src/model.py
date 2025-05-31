@@ -2,8 +2,24 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+# Optional: Squeeze-and-Excitation Block
+class SEBlock(nn.Module):
+    def __init__(self, channels, reduction=16):
+        super().__init__()
+        self.se = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(channels, channels // reduction, kernel_size=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(channels // reduction, channels, kernel_size=1),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        scale = self.se(x)
+        return x * scale
+
 class VGGBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, num_convs=2):
+    def __init__(self, in_channels, out_channels, num_convs=2, use_se=False):
         super().__init__()
         layers = []
         for i in range(num_convs):
@@ -11,24 +27,27 @@ class VGGBlock(nn.Module):
             layers.append(nn.BatchNorm2d(out_channels))
             layers.append(nn.ReLU(inplace=True))
         self.block = nn.Sequential(*layers)
+        self.use_se = use_se
+        self.se = SEBlock(out_channels) if use_se else nn.Identity()
 
     def forward(self, x):
-        return self.block(x)
+        x = self.block(x)
+        return self.se(x)
 
 class Model(nn.Module):
-    def __init__(self, num_scalar_features=22):
+    def __init__(self, num_scalar_features=8, use_se=True):
         super().__init__()
 
         self.vgg_blocks = nn.Sequential(
-            VGGBlock(1, 64, 2),
+            VGGBlock(1, 64, 2, use_se),
             nn.MaxPool2d(2, 2),
-            VGGBlock(64, 128, 2),
+            VGGBlock(64, 128, 2, use_se),
             nn.MaxPool2d(2, 2),
-            VGGBlock(128, 256, 3),
+            VGGBlock(128, 256, 3, use_se),
             nn.MaxPool2d(2, 2),
-            VGGBlock(256, 512, 3),
+            VGGBlock(256, 512, 3, use_se),
             nn.MaxPool2d(2, 2),
-            VGGBlock(512, 512, 3),
+            VGGBlock(512, 512, 3, use_se),
             nn.AdaptiveAvgPool2d((1, 1))
         )
 
@@ -74,12 +93,13 @@ class Model(nn.Module):
     def _initialize_weights(self):
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-                if m.bias is not None:
+                nn.init.kaiming_normal_(m.weight, nonlinearity='relu')
+                if hasattr(m, 'bias') and m.bias is not None:
                     nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.BatchNorm2d) or isinstance(m, nn.BatchNorm1d):
+            elif isinstance(m, (nn.BatchNorm2d, nn.BatchNorm1d)):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
             elif isinstance(m, nn.Linear):
                 nn.init.normal_(m.weight, 0, 0.01)
-                nn.init.constant_(m.bias, 0)
+                if hasattr(m, 'bias') and m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
