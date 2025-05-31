@@ -4,6 +4,7 @@ import pandas as pd
 import torch
 from torch.utils.data import DataLoader
 from torch import nn, optim
+import torch.nn.functional as F
 from sklearn.model_selection import train_test_split
 from sklearn.utils.class_weight import compute_class_weight
 from src.dataset import BreathingAudioDataset, breathing_collate_fn
@@ -14,6 +15,16 @@ from src.utils.display import (
 )
 
 device = torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
+
+class BCEWithLogitsLabelSmoothing(nn.Module):
+    def __init__(self, smoothing=0.05, pos_weight=None):
+        super().__init__()
+        self.smoothing = smoothing
+        self.pos_weight = pos_weight
+
+    def forward(self, logits, targets):
+        targets = targets * (1.0 - self.smoothing) + 0.5 * self.smoothing
+        return F.binary_cross_entropy_with_logits(logits, targets, pos_weight=self.pos_weight)
 
 def evaluate_model(model, validation_data_loader, criterion):
     model.eval()
@@ -69,7 +80,7 @@ def train_model():
     )
 
     model = Model().to(device)
-    criterion = nn.BCEWithLogitsLoss(pos_weight=positive_class_weight)
+    criterion = BCEWithLogitsLabelSmoothing(smoothing=0.05, pos_weight=positive_class_weight)
     optimizer = optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-3)
 
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(

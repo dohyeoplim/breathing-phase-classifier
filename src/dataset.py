@@ -5,6 +5,7 @@ from torch.utils.data import Dataset
 import librosa
 import os, re, warnings
 import scipy.signal, scipy.stats
+from scipy.ndimage import gaussian_filter1d
 
 warnings.filterwarnings("ignore")
 
@@ -53,14 +54,17 @@ class BreathingAudioDataset(Dataset):
         # === Mel + energy features ===
         mel = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=self.n_mels, hop_length=hop)
         mel_db = librosa.power_to_db(mel, ref=np.max)
-        mel_norm = self._normalize(mel_db)
+        # mel_norm = self._normalize(mel_db)
+
+        mel_smooth = gaussian_filter1d(mel_db, sigma=1.0, axis=1)
+        mel_norm = self._normalize(mel_smooth)
 
         rms = librosa.feature.rms(y=y, hop_length=hop)[0]
         zcr = librosa.feature.zero_crossing_rate(y, hop_length=hop)[0]
 
         # === Scalar features ===
         scalars = np.concatenate([
-            self._temporal_scalars(y, rms),
+            self._temporal_scalars(y, rms, zcr),
             self._spectral_scalars(y, mel)
         ]).astype(np.float32)
 
@@ -75,35 +79,43 @@ class BreathingAudioDataset(Dataset):
             "scalars": torch.tensor(scalars, dtype=torch.float32)
         }
 
-    def _temporal_scalars(self, y, rms):
+    def _temporal_scalars(self, y, rms, zcr):
         envelope = np.abs(scipy.signal.hilbert(y))
         peak_idx = np.argmax(envelope)
         peak_time_ratio = peak_idx / len(y)
         rise_time = peak_idx / self.sampling_rate
         fall_time = (len(y) - peak_idx) / self.sampling_rate
         rms_slope = np.polyfit(np.arange(len(rms)), rms, 1)[0]
+        zcr_std = np.std(zcr)
 
         return np.array([
             np.mean(rms), np.std(rms), rms_slope,
             peak_time_ratio, rise_time, fall_time,
-            scipy.stats.kurtosis(y)
+            3 * zcr_std  # 🔺 emphasized ZCR variation
         ])
 
     def _spectral_scalars(self, y, mel):
-        sr = self.sampling_rate
-        contrast = librosa.feature.spectral_contrast(y=y, sr=sr)
         entropy = np.mean(-np.sum((mel / (mel.sum(axis=0, keepdims=True) + 1e-8)) *
                                   np.log1p(mel + 1e-8), axis=0))
         flux = self._spectral_flux(mel)
 
-        freqs, psd = scipy.signal.welch(y, sr, nperseg=512)
+        freqs, psd = scipy.signal.welch(y, self.sampling_rate, nperseg=512)
         total_power = np.trapezoid(psd, freqs) + 1e-8
-        low = np.trapezoid(psd[(freqs >= 20) & (freqs < 500)], freqs[(freqs >= 20) & (freqs < 500)]) / total_power
-        high = np.trapezoid(psd[(freqs >= 2000) & (freqs < 8000)], freqs[(freqs >= 2000) & (freqs < 8000)]) / total_power
+
+        # ✅ Band-specific energy (2.52–4 kHz), inspired by paper
+        band_mask = (freqs >= 2520) & (freqs <= 4000)
+        band_psd = np.mean(psd[band_mask])
+        amplified_band_psd = 3 * band_psd  # 🔺 amplify its role
+
+        # ✅ Low band (optional for normalization or contrast)
+        low_mask = (freqs >= 20) & (freqs < 500)
+        low_power = np.trapezoid(psd[low_mask], freqs[low_mask]) / total_power
 
         return np.array([
-            np.mean(contrast),
-            entropy, flux, low, high
+            entropy,
+            flux,
+            low_power,
+            amplified_band_psd  # 🔺 emphasized frequency content
         ])
 
     def _spectral_flux(self, mel):

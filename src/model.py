@@ -21,7 +21,7 @@ class VGGBlock(nn.Module):
         return self.block(x) + self.proj(x)
 
 class Model(nn.Module):
-    def __init__(self, num_scalar_features=12):
+    def __init__(self, num_scalar_features=11):
         super().__init__()
 
         self.vgg_blocks = nn.Sequential(
@@ -33,7 +33,7 @@ class Model(nn.Module):
             nn.MaxPool2d(2, 2),
             VGGBlock(256, 512, 3),
             nn.MaxPool2d(2, 2),
-            VGGBlock(512, 512, 3),
+            # VGGBlock(512, 512, 3),
             nn.AdaptiveAvgPool2d((1, 1))
         )
 
