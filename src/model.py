@@ -2,60 +2,74 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+class VGGBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, num_convs=2):
+        super().__init__()
+        layers = []
+        for i in range(num_convs):
+            layers.append(nn.Conv2d(in_channels if i == 0 else out_channels, out_channels, kernel_size=3, padding=1))
+            layers.append(nn.BatchNorm2d(out_channels))
+            layers.append(nn.ReLU(inplace=True))
+        self.block = nn.Sequential(*layers)
+
+    def forward(self, x):
+        return self.block(x)
+
 class Model(nn.Module):
-    def __init__(self):
+    def __init__(self, num_scalar_features=22):
         super().__init__()
 
-        self.encoder = nn.Sequential(
-            # Block 1 - Start with fewer filters
-            nn.Conv2d(1, 16, kernel_size=5, padding=2),  # Larger kernel for audio
-            nn.BatchNorm2d(16, momentum=0.05),  # Lower momentum
-            nn.ReLU(inplace=True),
-            nn.Conv2d(16, 32, kernel_size=3, padding=1),
-            nn.BatchNorm2d(32, momentum=0.05),
-            nn.ReLU(inplace=True),
+        self.vgg_blocks = nn.Sequential(
+            VGGBlock(1, 64, 2),
             nn.MaxPool2d(2, 2),
-            nn.Dropout2d(0.1),  # Light dropout early
-
-            # Block 2
-            nn.Conv2d(32, 64, kernel_size=3, padding=1),
-            nn.BatchNorm2d(64, momentum=0.05),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(64, 64, kernel_size=3, padding=1),
-            nn.BatchNorm2d(64, momentum=0.05),
-            nn.ReLU(inplace=True),
+            VGGBlock(64, 128, 2),
             nn.MaxPool2d(2, 2),
-            nn.Dropout2d(0.15),
-
-            # Block 3
-            nn.Conv2d(64, 128, kernel_size=3, padding=1),
-            nn.BatchNorm2d(128, momentum=0.05),
-            nn.ReLU(inplace=True),
+            VGGBlock(128, 256, 3),
+            nn.MaxPool2d(2, 2),
+            VGGBlock(256, 512, 3),
+            nn.MaxPool2d(2, 2),
+            VGGBlock(512, 512, 3),
+            nn.AdaptiveAvgPool2d((1, 1))
         )
 
-        self.temporal_gru = nn.GRU(
-            input_size=128 * 8,
-            hidden_size=64,
-            num_layers=1,
-            batch_first=True,
-            bidirectional=True,
-            dropout=0
+        self.scalar_net = nn.Sequential(
+            nn.Linear(num_scalar_features, 128),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(128, 256),
+            nn.BatchNorm1d(256),
+            nn.ReLU()
+        )
+
+        self.fusion = nn.Sequential(
+            nn.Linear(512 + 256, 1024),
+            nn.BatchNorm1d(1024),
+            nn.ReLU(),
+            nn.Dropout(0.5)
         )
 
         self.classifier = nn.Sequential(
-            nn.Linear(128, 64),  # 64*2 from bidirectional
-            nn.BatchNorm1d(64),
-            nn.ReLU(inplace=True),
-            nn.Dropout(0.4),
-            nn.Linear(64, 32),
-            nn.BatchNorm1d(32),
-            nn.ReLU(inplace=True),
-            nn.Dropout(0.3),
-            nn.Linear(32, 1)
+            nn.Linear(1024, 256),
+            nn.BatchNorm1d(256),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(256, 1)
         )
 
         self._initialize_weights()
 
+    def forward(self, features, scalars):
+        if features is not None:
+            x = self.vgg_blocks(features)
+            x = x.view(x.size(0), -1)
+        else:
+            x = torch.zeros((scalars.size(0), 512), device=scalars.device)
+
+        s = self.scalar_net(scalars)
+        combined = torch.cat([x, s], dim=1)
+        fused = self.fusion(combined)
+        return self.classifier(fused)
 
     def _initialize_weights(self):
         for m in self.modules():
@@ -67,30 +81,5 @@ class Model(nn.Module):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
             elif isinstance(m, nn.Linear):
-                nn.init.xavier_normal_(m.weight)
+                nn.init.normal_(m.weight, 0, 0.01)
                 nn.init.constant_(m.bias, 0)
-
-    #
-    # def manual_adaptive_pool(self, x, output_size):
-    #     b, c, h, w = x.shape
-    #     x = F.interpolate(x, size=(output_size, w), mode='bilinear', align_corners=False)
-    #     return x
-
-    def forward(self, x):
-        # Encoder
-        x = self.encoder(x)
-
-        # Adaptive pooling
-        b, c, h, w = x.shape
-        if h != 8:
-            x = F.interpolate(x, size=(8, w), mode='bilinear', align_corners=False)
-
-        # Temporal modeling
-        b, c, f, t = x.shape
-        x = x.permute(0, 3, 1, 2).reshape(b, t, -1)
-        x, _ = self.temporal_gru(x)
-
-        # Global average pooling
-        x = x.mean(dim=1)
-
-        return self.classifier(x)

@@ -5,10 +5,8 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from rich.console import Console
 from datetime import datetime
-
 from src.dataset import BreathingAudioDataset, breathing_collate_fn
 from src.model import Model
-
 from src.utils.display import (
     print_start,
     print_success,
@@ -23,10 +21,13 @@ def predict_model():
 
     test_dataframe = pd.read_csv("input/test.csv")
     test_dataset = BreathingAudioDataset(test_dataframe, "input/test", is_training=False)
+
     test_data_loader = DataLoader(
         test_dataset,
-        batch_size=32,
+        batch_size=64,
         shuffle=False,
+        num_workers=0,
+        pin_memory=True,
         collate_fn=breathing_collate_fn
     )
 
@@ -37,15 +38,18 @@ def predict_model():
         print_error(f"Model file not found: {model_path}")
         raise FileNotFoundError(model_path)
 
-    model.load_state_dict(torch.load(model_path, map_location=device))
+    checkpoint = torch.load(model_path, map_location=device)
+    model.load_state_dict(checkpoint['model_state_dict'])
     model.eval()
 
     predictions = []
+
     with torch.no_grad():
-        for features, identifiers in progress_bar(test_data_loader, "🔮 Running inference"):
+        for features, scalars, identifiers in progress_bar(test_data_loader, "🔮 Running inference"):
             features = features.to(device)
-            outputs = model(features)
-            probabilities = torch.sigmoid(outputs).cpu().squeeze().numpy()
+            scalars = scalars.to(device)
+            outputs = model(features, scalars).squeeze()
+            probabilities = torch.sigmoid(outputs).cpu().numpy()
 
             if probabilities.ndim == 0:
                 probabilities = [probabilities]
@@ -56,6 +60,7 @@ def predict_model():
     os.makedirs("submissions", exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     submission_path = f"submissions/submission_{timestamp}.csv"
+
     submission_dataframe = pd.DataFrame(predictions, columns=["ID", "Target"])
     submission_dataframe.to_csv(submission_path, index=False)
     print_success(f"{submission_path} 저장 완료")
