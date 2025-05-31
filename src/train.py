@@ -44,7 +44,7 @@ def evaluate_model(model, validation_data_loader, criterion):
     return accuracy, avg_loss
 
 def train_model():
-    print_start("Training Stabilized Model")
+    print_start("Training")
 
     dataframe = pd.read_csv("input/train.csv")
     numeric_labels = dataframe["Target"].map(lambda label: 1 if label == "E" else 0)

@@ -3,16 +3,14 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset
 import librosa
-import os
-import re
-import scipy.signal
-import scipy.stats
-import warnings
+import os, re, warnings
+import scipy.signal, scipy.stats
 
 warnings.filterwarnings("ignore")
 
 class BreathingAudioDataset(Dataset):
-    def __init__(self, data_frame, data_directory, is_training=True, transform=None, sampling_rate=16000, duration_in_seconds=1):
+    def __init__(self, data_frame, data_directory, is_training=True, transform=None,
+                 sampling_rate=16000, duration_in_seconds=1):
         self.data = data_frame
         self.data_directory = data_directory
         self.is_training = is_training
@@ -20,7 +18,7 @@ class BreathingAudioDataset(Dataset):
         self.sampling_rate = sampling_rate
         self.duration_in_seconds = duration_in_seconds
         self.expected_length = sampling_rate * duration_in_seconds
-        self.n_mels = 64
+        self.n_mels = 128
 
     def __len__(self):
         return len(self.data)
@@ -31,8 +29,8 @@ class BreathingAudioDataset(Dataset):
         file_name = re.sub(r'_[EI]_', '_', file_id) + '.wav' if self.is_training else file_id
         file_path = os.path.join(self.data_directory, file_name)
 
-        waveform = self._load_audio(file_path)
-        features = self._extract_features(waveform)
+        y = self._load_audio(file_path)
+        features = self._extract_features(y)
 
         if self.is_training:
             label = 1.0 if row["Target"] == "E" else 0.0
@@ -41,53 +39,34 @@ class BreathingAudioDataset(Dataset):
             return features, row["ID"]
 
     def _load_audio(self, file_path):
-        waveform, _ = librosa.load(file_path, sr=self.sampling_rate)
-        return self._normalize_audio(waveform)
+        y, _ = librosa.load(file_path, sr=self.sampling_rate)
+        return self._normalize_audio(y)
 
-    def _normalize_audio(self, waveform, target_rms=0.1):
-        rms = np.sqrt(np.mean(waveform ** 2)) + 1e-8
-        return waveform * (target_rms / rms)
+    def _normalize_audio(self, y, target_rms=0.1):
+        rms = np.sqrt(np.mean(y**2)) + 1e-8
+        return y * (target_rms / rms)
 
     def _extract_features(self, y):
         sr = self.sampling_rate
-        hop_length = 512
+        hop = 512
 
-        # Spectrogram (simplified)
-        mel = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=self.n_mels, hop_length=hop_length)
+        # === Mel + energy features ===
+        mel = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=self.n_mels, hop_length=hop)
         mel_db = librosa.power_to_db(mel, ref=np.max)
-        mel_db_norm = self._normalize(mel_db)
+        mel_norm = self._normalize(mel_db)
 
-        # Scalars: only high-importance features
-        rms = librosa.feature.rms(y=y, hop_length=hop_length)[0]
-        centroid = librosa.feature.spectral_centroid(y=y, sr=sr, hop_length=hop_length)[0]
-        zcr = librosa.feature.zero_crossing_rate(y, hop_length=hop_length)[0]
-        flatness = librosa.feature.spectral_flatness(y=y)[0]
+        rms = librosa.feature.rms(y=y, hop_length=hop)[0]
+        zcr = librosa.feature.zero_crossing_rate(y, hop_length=hop)[0]
 
-        # Spectral entropy
-        mel_norm = mel / (mel.sum(axis=0, keepdims=True) + 1e-8)
-        entropy_per_frame = -np.sum(mel_norm * np.log1p(mel_norm), axis=0)
-        entropy_mel = np.mean(entropy_per_frame)
-
-        # PSD band energy (low only)
-        freqs, psd = scipy.signal.welch(y, sr, nperseg=512)
-        idx_low = np.logical_and(freqs >= 20, freqs < 500)
-        psd_low = np.trapezoid(psd[idx_low], freqs[idx_low])
-
-        scalars = np.array([
-            np.mean(rms),
-            np.std(rms),
-            np.mean(centroid),
-            np.std(centroid),
-            np.std(zcr),
-            np.mean(flatness),
-            entropy_mel,
-            psd_low
-        ], dtype=np.float32)
+        # === Scalar features ===
+        scalars = np.concatenate([
+            self._temporal_scalars(y, rms),
+            self._spectral_scalars(y, mel)
+        ]).astype(np.float32)
 
         feature_stack = np.vstack([
-            mel_db_norm,
+            mel_norm,
             self._normalize(rms[np.newaxis, :]),
-            self._normalize(centroid[np.newaxis, :] / sr),
             self._normalize(zcr[np.newaxis, :])
         ])
 
@@ -96,9 +75,43 @@ class BreathingAudioDataset(Dataset):
             "scalars": torch.tensor(scalars, dtype=torch.float32)
         }
 
+    def _temporal_scalars(self, y, rms):
+        envelope = np.abs(scipy.signal.hilbert(y))
+        peak_idx = np.argmax(envelope)
+        peak_time_ratio = peak_idx / len(y)
+        rise_time = peak_idx / self.sampling_rate
+        fall_time = (len(y) - peak_idx) / self.sampling_rate
+        rms_slope = np.polyfit(np.arange(len(rms)), rms, 1)[0]
+
+        return np.array([
+            np.mean(rms), np.std(rms), rms_slope,
+            peak_time_ratio, rise_time, fall_time,
+            scipy.stats.kurtosis(y)
+        ])
+
+    def _spectral_scalars(self, y, mel):
+        sr = self.sampling_rate
+        contrast = librosa.feature.spectral_contrast(y=y, sr=sr)
+        entropy = np.mean(-np.sum((mel / (mel.sum(axis=0, keepdims=True) + 1e-8)) *
+                                  np.log1p(mel + 1e-8), axis=0))
+        flux = self._spectral_flux(mel)
+
+        freqs, psd = scipy.signal.welch(y, sr, nperseg=512)
+        total_power = np.trapezoid(psd, freqs) + 1e-8
+        low = np.trapezoid(psd[(freqs >= 20) & (freqs < 500)], freqs[(freqs >= 20) & (freqs < 500)]) / total_power
+        high = np.trapezoid(psd[(freqs >= 2000) & (freqs < 8000)], freqs[(freqs >= 2000) & (freqs < 8000)]) / total_power
+
+        return np.array([
+            np.mean(contrast),
+            entropy, flux, low, high
+        ])
+
+    def _spectral_flux(self, mel):
+        diff = np.diff(mel, axis=1)
+        return np.mean(np.sqrt((diff ** 2).sum(axis=0)))
+
     def _normalize(self, x):
         return (x - np.mean(x)) / (np.std(x) + 1e-8)
-
 
 def breathing_collate_fn(batch):
     features, scalars, labels_or_ids = [], [], []
