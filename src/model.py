@@ -21,7 +21,7 @@ class VGGBlock(nn.Module):
         return self.block(x) + self.proj(x)
 
 class Model(nn.Module):
-    def __init__(self, num_scalar_features=6):
+    def __init__(self, num_scalar_features=8):
         super().__init__()
 
         self.vgg_blocks = nn.Sequential(
@@ -52,14 +52,14 @@ class Model(nn.Module):
             nn.Linear(512 + 256, 384),
             nn.BatchNorm1d(384),
             nn.ReLU(),
-            nn.Dropout(0.4)
+            nn.Dropout(0.5)
         )
 
         self.classifier = nn.Sequential(
             nn.Linear(384, 256),
             nn.BatchNorm1d(256),
             nn.ReLU(),
-            nn.Dropout(0.5),
+            nn.Dropout(0.3),
             nn.Linear(256, 1)
         )
 

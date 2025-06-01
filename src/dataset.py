@@ -48,14 +48,15 @@ class BreathingAudioDataset(Dataset):
 
     def _extract_features(self, y):
         sr = self.sampling_rate
-        hop = 256
+        hop = 128
 
         mel = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=self.n_mels, hop_length=hop)
         mel_db = librosa.power_to_db(mel, ref=np.max)
-        # mel_smooth = gaussian_filter1d(mel_db, sigma=1.0, axis=1)
-        mel_norm = self._normalize(mel_db)
+        mel_smooth = gaussian_filter1d(mel_db, sigma=1.2, axis=1)
+        mel_norm = self._normalize(mel_smooth)
 
         rms = librosa.feature.rms(y=y, hop_length=hop)[0]
+        centroid = librosa.feature.spectral_centroid(y=y, sr=sr, hop_length=hop)[0]
         zcr = librosa.feature.zero_crossing_rate(y, hop_length=hop)[0]
 
         scalars = np.concatenate([
@@ -63,11 +64,12 @@ class BreathingAudioDataset(Dataset):
             self._spectral_scalars(y, mel)
         ]).astype(np.float32)
 
-        # scalars = np.clip(scalars, -5, 5)
+        scalars = np.clip(scalars, -5, 5)
 
         feature_stack = np.vstack([
             mel_norm,
             self._normalize(rms[np.newaxis, :]),
+            self._normalize(centroid[np.newaxis, :] / sr),
             self._normalize(zcr[np.newaxis, :])
         ])
 
@@ -77,21 +79,31 @@ class BreathingAudioDataset(Dataset):
         }
 
     def _temporal_scalars(self, y, rms, zcr):
-        envelope = np.abs(scipy.signal.hilbert(y))
-        peak_idx = np.argmax(envelope)
-        peak_time_ratio = peak_idx / len(y)
-        rise_time = peak_idx / self.sampling_rate
-        fall_time = (len(y) - peak_idx) / self.sampling_rate
-        rms_slope = np.polyfit(np.arange(len(rms)), rms, 1)[0]
+        rms_mean = np.mean(rms)
+        rms_range = np.max(rms) - np.min(rms)
         zcr_std = np.std(zcr)
 
+        envelope = np.abs(scipy.signal.hilbert(y))
+        peak_idx = np.argmax(envelope)
+        env_mean = np.mean(envelope)
+        env_std = np.std(envelope)
+        env_range = np.max(envelope) - np.min(envelope)
+        rise_time = peak_idx / self.sampling_rate
+        # log_rise = np.log1p(rise_time)
+
+        env_snr = env_mean / (env_std + 1e-8)
+        # wheeze_ratio = np.mean(envelope > (env_mean + 0.5 * env_std))
+
         return np.array([
-            np.mean(rms), np.std(rms),
-            # rms_slope,
-            # peak_time_ratio,
-            # rise_time,
-            # fall_time,
-            5 * zcr_std
+            # rms_mean,
+            rms_range,
+            rise_time,
+            # log_rise,
+            # zcr_std,
+            # env_std,
+            env_snr,
+            env_range,
+            # wheeze_ratio,
         ])
 
     def _spectral_scalars(self, y, mel):
@@ -102,23 +114,36 @@ class BreathingAudioDataset(Dataset):
         freqs, psd = scipy.signal.welch(y, self.sampling_rate, nperseg=512)
         total_power = np.trapezoid(psd, freqs) + 1e-8
 
-        band_mask = (freqs >= 2520) & (freqs <= 4000)
-        band_psd = psd[band_mask]
-        mean_band = np.mean(band_psd)
-        std_band = np.std(band_psd)
-        max_band = np.max(band_psd)
-        amplified_band_psd = 3 * mean_band
+        low_mask = (freqs >= 100) & (freqs < 500)
+        mid_mask = (freqs >= 500) & (freqs < 1000)
+        high_mask = (freqs >= 2520) & (freqs <= 4000)
 
-        low_mask = (freqs >= 20) & (freqs < 500)
-        low_power = np.trapezoid(psd[low_mask], freqs[low_mask]) / total_power
+
+        low_power = np.trapezoid(psd[low_mask], freqs[low_mask]) + 1e-8
+        high_power = np.trapezoid(psd[high_mask], freqs[high_mask]) + 1e-8
+        ratio_high_to_low = high_power / low_power
+        log_diff = np.log10(high_power + 1e-8) - np.log10(low_power + 1e-8)
+
+
+        high_band_psd = psd[high_mask]
+        range_high_band = np.max(high_band_psd) - np.min(high_band_psd)
+        std_high_band = np.std(high_band_psd)
+        # low_mask = (freqs >= 20) & (freqs < 500)
+        # low_psd = psd[low_mask]
+        # low_power = np.trapezoid(low_psd, freqs[low_mask]) / total_power
+        # range_low = np.max(low_psd) - np.min(low_psd)
+
+        # psd_geomean = np.exp(np.mean(np.log(psd + 1e-8)))
 
         return np.array([
             # entropy,
-            5* flux,
-            # low_power,
-            amplified_band_psd,
-            std_band,
-            # max_band
+            flux**2,
+            # mean_band,
+            std_high_band,
+            range_high_band,
+            ratio_high_to_low,
+            # range_low,
+            # psd_geomean,
         ])
 
     def _spectral_flux(self, mel):

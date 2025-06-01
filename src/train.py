@@ -4,6 +4,7 @@ import pandas as pd
 import torch
 from torch.utils.data import DataLoader
 from torch import nn, optim
+from torch.optim.lr_scheduler import LambdaLR
 import torch.nn.functional as F
 from sklearn.model_selection import train_test_split
 from sklearn.utils.class_weight import compute_class_weight
@@ -25,6 +26,18 @@ class BCEWithLogitsLabelSmoothing(nn.Module):
     def forward(self, logits, targets):
         targets = targets * (1.0 - self.smoothing) + 0.5 * self.smoothing
         return F.binary_cross_entropy_with_logits(logits, targets, pos_weight=self.pos_weight)
+
+def lr_lambda(epoch):
+    warmup_epochs = 3
+    decay_start = 5
+    decay_factor = 0.95
+
+    if epoch < warmup_epochs:
+        return (epoch + 1) / warmup_epochs
+    elif epoch < decay_start:
+        return 1.0
+    else:
+        return decay_factor ** (epoch - decay_start)
 
 def evaluate_model(model, validation_data_loader, criterion):
     model.eval()
@@ -83,9 +96,10 @@ def train_model():
     criterion = BCEWithLogitsLabelSmoothing(smoothing=0.05, pos_weight=positive_class_weight)
     optimizer = optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-3)
 
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='max', factor=0.5, patience=3, min_lr=1e-6, verbose=True
-    )
+    # scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+    #     optimizer, mode='max', factor=0.5, patience=1, min_lr=1e-6, verbose=True
+    # )
+    scheduler = LambdaLR(optimizer, lr_lambda)
 
     os.makedirs("models", exist_ok=True)
     best_validation_accuracy = 0.0
