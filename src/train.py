@@ -89,7 +89,7 @@ def train_model():
 
     os.makedirs("models", exist_ok=True)
     best_validation_accuracy = 0.0
-    patience = 10
+    patience = 7
     patience_counter = 0
     min_delta = 0.001
 
