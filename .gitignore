@@ -196,3 +196,7 @@ pyrightconfig.json
 
 models/*
 submissions/*
+
+
+*/.DS_Store
+.DS_Store

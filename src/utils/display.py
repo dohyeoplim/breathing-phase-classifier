@@ -15,7 +15,7 @@ def print_validation_accuracy(accuracy: float, min_prob: float, max_prob: float)
     console.print(f"[dim]Probability range: {min_prob:.3f}–{max_prob:.3f}[/dim]")
 
 def progress_bar(iterable, description: str):
-    return tqdm(iterable, desc=description, ncols=80)
+    return tqdm(iterable, desc=description, ncols=80, leave=True)
 
 def print_success(message: str):
     console.print(f"[bold green]✅ {message}[/bold green]")
