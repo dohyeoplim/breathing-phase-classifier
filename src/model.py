@@ -1,43 +1,91 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+
+class VGGBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, num_convs=2):
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        layers = []
+        for i in range(num_convs):
+            layers += [
+                nn.Conv2d(in_channels if i == 0 else out_channels, out_channels, 3, padding=1),
+                nn.BatchNorm2d(out_channels),
+                nn.ReLU(inplace=True)
+            ]
+        self.block = nn.Sequential(*layers)
+        self.proj = nn.Conv2d(in_channels, out_channels, 1) if in_channels != out_channels else nn.Identity()
+
+    def forward(self, x):
+        return self.block(x) + self.proj(x)
 
 class Model(nn.Module):
-    def __init__(self):
+    def __init__(self, num_scalar_features=8):
         super().__init__()
 
-        self.encoder = nn.Sequential(
-            nn.Conv2d(1, 32, kernel_size=(3, 3), padding=(1, 1)),
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=(2, 2)),
-
-            nn.Conv2d(32, 64, kernel_size=(3, 3), padding=(1, 1)),
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=(2, 2))  # [B, 64, freq', time']
+        self.vgg_blocks = nn.Sequential(
+            VGGBlock(1, 64, 2),
+            nn.MaxPool2d(2, 2),
+            VGGBlock(64, 128, 2),
+            nn.MaxPool2d(2, 2),
+            VGGBlock(128, 256, 3),
+            nn.MaxPool2d(2, 2),
+            VGGBlock(256, 512, 3),
+            nn.MaxPool2d(2, 2),
+            VGGBlock(512, 512, 3),
+            nn.AdaptiveAvgPool2d((1, 1))
         )
 
-        # GRU input : (batch, time, features)
-        self.gru_input_size = 64 * 22  # from 90 → 45 → 22 freq bins
+        self.scalar_net = nn.Sequential(
+            nn.Linear(num_scalar_features, 128),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(128, 256),
+            nn.BatchNorm1d(256),
+            nn.ReLU(),
+            nn.Dropout(0.3)
+        )
 
-        self.temporal_gru = nn.GRU(
-            input_size=self.gru_input_size,
-            hidden_size=64,
-            num_layers=1,
-            batch_first=True,
-            bidirectional=True
+        self.fusion = nn.Sequential(
+            nn.Linear(512 + 256, 384),
+            nn.BatchNorm1d(384),
+            nn.ReLU(),
+            nn.Dropout(0.5)
         )
 
         self.classifier = nn.Sequential(
+            nn.Linear(384, 256),
+            nn.BatchNorm1d(256),
+            nn.ReLU(),
             nn.Dropout(0.3),
-            nn.Linear(64 * 2, 1)
+            nn.Linear(256, 1)
         )
 
-    def forward(self, x):
-        x = self.encoder(x)  # [B, 64, freq, time]
-        b, c, f, t = x.shape
-        x = x.permute(0, 3, 1, 2)  # [B, time, channels, freq]
-        x = x.reshape(b, t, -1)    # [B, time, features]
-        x, _ = self.temporal_gru(x)
-        x = x.mean(dim=1)
-        return self.classifier(x)
+        self._initialize_weights()
+
+    def forward(self, features, scalars):
+        if features is not None:
+            x = self.vgg_blocks(features)
+            x = x.view(x.size(0), -1)
+        else:
+            x = torch.zeros((scalars.size(0), 512), device=scalars.device)
+
+        s = self.scalar_net(scalars)
+        combined = torch.cat([x, s], dim=1)
+        fused = self.fusion(combined)
+        return self.classifier(fused)
+
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d) or isinstance(m, nn.BatchNorm1d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.normal_(m.weight, 0, 0.01)
+                nn.init.constant_(m.bias, 0)
