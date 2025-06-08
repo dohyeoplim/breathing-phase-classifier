@@ -47,8 +47,8 @@ python main.py
 
 | Column     | Type   | Description                                  |
 |------------|--------|----------------------------------------------|
-| file_name  | string | ID matching a `.wav` file in `train/`        |
-| label      | string | Breathing phase: `I` = Inhale, `E` = Exhale |
+| ID  | string | ID matching a `.wav` file in `train/`        |
+| Target | string | Breathing phase: `I` = Inhale, `E` = Exhale |
 
 #### `test.csv`
 
