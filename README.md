@@ -30,11 +30,6 @@ Developed by:
 python main.py
 ```
 
-**Precompute Features Only:**
-```bash
-python main.py --precompute
-```
-
 <br/>
 
 ## 📊 Dataset Overview
@@ -60,6 +55,37 @@ python main.py --precompute
 | Column | Type   | Description                            |
 |--------|--------|----------------------------------------|
 | ID     | string | ID matching a `.wav` file in `test/`   |
+
+<br />
+
+## 🎧 Feature Extraction Pipeline
+
+All audio samples are preprocessed and saved as `.npz` files to reduce computation during training phase.
+
+### Spectrogram-based features
+
+- `mel`: log-scaled Mel-spectrogram (128 bins)
+- `mel_delta`, `mel_delta2`: 1st and 2nd temporal derivatives of mel
+- `mfcc`: 40 MFCCs + delta + delta², vertically stacked and rescaled to 128 bins
+- `chroma`: concatenation of chroma energy (`chroma_stft`) and CENS features
+- `gammatone`: Mel-filter-applied gammatone approximation (64 bands → 128 bins)
+- `lpc`: LPC coefficient matrix padded to `[128 × T]`
+- `mod_spec`: 2D DCT of log-mel (spectral modulation)
+- `tempogram`: tempogram extracted from onset envelope
+
+### Scalar features
+- RMS, ZCR, centroid, bandwidth, rolloff, flatness, contrast
+- Envelope mean/variance, peak count and statistics
+- Low-frequency energy ratio, spectral flux
+- Skewness, kurtosis, amplitude percentiles
+- Short-lag autocorrelation values, first minimum index
+
+### Execution
+
+```bash
+python main.py --precompute
+```
+
 <br />
 
 ## 🧠 Model Overview
@@ -119,7 +145,26 @@ Inspired by the VGG family, enhanced with GELU, residual connection, and aggress
 
 - **Total Parameters**: **~8.15M**
 
-### 🔗 Final Prediction Aggregation
+<br />
+
+## ⚒️ Training Strategy
+
+- **Optimizer**: AdamW with `weight_decay = 1e-4`
+- **Loss Function**: `BCEWithLogitsLoss`
+- **Learning Rate Scheduling**:
+  - Linear warm-up during the early phase
+  - Cosine annealing for the remaining steps
+- **Epochs**:
+  - CNN8: up to 100 epochs
+  - VGG: up to 140 epochs
+- **Gradient Clipping**: Applied with `max_norm = 1.0`
+- **Data Augmentation**:
+  - **CutMix** and **MixUp** are applied probabilistically during training (`cutmix_prob = 0.6`, `mixup_prob = 0.4`)
+  - Augmentations are activated after a warm-up period (`warmup_epochs = 4`)
+
+<br />
+
+## 🔗 Final Prediction Aggregation
 
 Each model outputs a sigmoid-activated probability. The final prediction is a weighted average:
 
