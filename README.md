@@ -5,14 +5,14 @@
 - 원송원(24102401)
 
 
-**Training:**
+**Train and Predict:**
 ```bash
-python main.py train
+python main.py
 ```
 
-**Predicting with the Best Model:**
+**Precompute Features:**
 ```bash
-python main.py predict
+python main.py --precompute
 ```
 
 
