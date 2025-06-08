@@ -69,9 +69,8 @@ All audio samples are preprocessed and saved as `.npz` files to reduce computati
 
 - `STFT` (Log-Power Spectrogram)
   ![STFT](https://github.com/user-attachments/assets/3bedca86-7ade-4bb8-9f14-a8e3aff220e0)
-- `mel`: log-scaled Mel-spectrogram (128 bins)
+- `mel`, `mel_delta`, `mel_delta2`: log-scaled Mel-spectrogram (128 bins) and 1st and 2nd temporal derivatives of mel
   ![Mel](https://github.com/user-attachments/assets/cc4803fa-e331-4812-973b-45f5b1eb8dd7)
-- `mel_delta`, `mel_delta2`: 1st and 2nd temporal derivatives of mel
 - `mfcc`: 40 MFCCs + delta + delta², vertically stacked and rescaled to 128 bins
   ![MFC](https://github.com/user-attachments/assets/c8ea0e8f-c6f9-4b47-92fb-cd7cb55b7b8f)
 - `chroma`: concatenation of chroma energy (`chroma_stft`) and CENS features
