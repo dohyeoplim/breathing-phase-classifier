@@ -12,13 +12,14 @@ Developed by:
 
 **Project Structure:**
 ```plaintext
-├── main.py                  # Main entry point for training or precomputing
+├── main.py              # Main entry point for training or precomputing
 ├── src/
-│   ├── augmentation.py      # CutMix and Mixup
-│   ├── dataset.py           # Dataset Class from the precomputed features
-│   ├── model.py             # Model architectures
-│   ├── train.py             # Train logics
-│   └── scripts/             # Training and evaluation routines
+│   ├── augmentation.py  # CutMix and Mixup
+│   ├── dataset.py       # Dataset Class from the precomputed features
+│   ├── model.py         # Model architectures
+│   ├── train.py         # Train logics
+│   ├── precompute/      # Feature extraction pipeline: spectrograms, scalars, and preprocessing utilities
+│   └── scripts/         # Training and evaluation routines
 └── README.md
 ```
 
