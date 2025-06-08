@@ -1,5 +1,7 @@
 # 🫁 A Deep Learning Approach to Respiratory Phase Detection from Audio Spectrograms
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/gist/dohyeoplim/a83fa674e537473f1adb66960db0a32c/kaggle_2_v3.ipynb)
+
 Developed by:
 
 - **Dohyeop Lim** — Dept. of Artificial Intelligence, Seoul National University of Science and Technology  
