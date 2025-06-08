@@ -62,12 +62,20 @@ python main.py
 
 All audio samples are preprocessed and saved as `.npz` files to reduce computation during training phase.
 
+![Waveform](https://github.com/user-attachments/assets/144ab1b4-b24c-48ef-87e1-61a50d55835c)
+
+
 ### Spectrogram-based features
 
+- `STFT` (Log-Power Spectrogram)
+  ![STFT](https://github.com/user-attachments/assets/3bedca86-7ade-4bb8-9f14-a8e3aff220e0)
 - `mel`: log-scaled Mel-spectrogram (128 bins)
+  ![Mel](https://github.com/user-attachments/assets/cc4803fa-e331-4812-973b-45f5b1eb8dd7)
 - `mel_delta`, `mel_delta2`: 1st and 2nd temporal derivatives of mel
 - `mfcc`: 40 MFCCs + delta + delta², vertically stacked and rescaled to 128 bins
+  ![MFC](https://github.com/user-attachments/assets/c8ea0e8f-c6f9-4b47-92fb-cd7cb55b7b8f)
 - `chroma`: concatenation of chroma energy (`chroma_stft`) and CENS features
+  ![chroma](https://github.com/user-attachments/assets/c4e10ca0-be6c-4248-8929-1bb1276efa59)
 - `gammatone`: Mel-filter-applied gammatone approximation (64 bands → 128 bins)
 - `lpc`: LPC coefficient matrix padded to `[128 × T]`
 - `mod_spec`: 2D DCT of log-mel (spectral modulation)
