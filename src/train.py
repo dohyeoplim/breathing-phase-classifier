@@ -1,173 +1,173 @@
 import os
 import numpy as np
-import pandas as pd
 import torch
+import torch.nn as nn
+from torch.optim.lr_scheduler import SequentialLR, LinearLR, CosineAnnealingLR
 from torch.utils.data import DataLoader
-from torch import nn, optim
-from torch.optim.lr_scheduler import LambdaLR
-import torch.nn.functional as F
-from sklearn.model_selection import train_test_split
-from sklearn.utils.class_weight import compute_class_weight
-from src.dataset import BreathingAudioDataset, breathing_collate_fn
-from src.model import Model
+from torch.cuda.amp import GradScaler, autocast # AMP 쓰는건 맥에서 안됨 -- 메인브렌치도 A100에서 돌리도록
+from src.augmentation import cutmix_data, mixup_data
 from src.utils.display import (
     print_start, print_epoch_summary, print_validation_accuracy,
     print_success, print_warning, progress_bar, count_parameters
 )
 
-device = torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
-
-class BCEWithLogitsLabelSmoothing(nn.Module):
-    def __init__(self, smoothing=0.05, pos_weight=None):
-        super().__init__()
-        self.smoothing = smoothing
-        self.pos_weight = pos_weight
-
-    def forward(self, logits, targets):
-        targets = targets * (1.0 - self.smoothing) + 0.5 * self.smoothing
-        return F.binary_cross_entropy_with_logits(logits, targets, pos_weight=self.pos_weight)
-
-def lr_lambda(epoch):
-    warmup_epochs = 3
-    decay_start = 5
-    decay_factor = 0.95
-
-    if epoch < warmup_epochs:
-        return (epoch + 1) / warmup_epochs
-    elif epoch < decay_start:
-        return 1.0
-    else:
-        return decay_factor ** (epoch - decay_start)
-
-def evaluate_model(model, validation_data_loader, criterion):
-    model.eval()
-    total_correct = 0
-    total_samples = 0
-    total_loss = 0
-    all_predictions = []
-
-    with torch.no_grad():
-        for features, scalars, labels in validation_data_loader:
-            features = features.to(device)
-            scalars = scalars.to(device)
-            labels = labels.to(device)
-            outputs = model(features, scalars).squeeze()
-            loss = criterion(outputs, labels)
-            total_loss += loss.item()
-            probabilities = torch.sigmoid(outputs)
-            predictions = (probabilities > 0.5).float()
-            all_predictions.extend(probabilities.cpu().tolist())
-            total_correct += (predictions == labels).sum().item()
-            total_samples += labels.size(0)
-
-    accuracy = total_correct / total_samples
-    avg_loss = total_loss / len(validation_data_loader)
-    min_prob = min(all_predictions) if all_predictions else 0
-    max_prob = max(all_predictions) if all_predictions else 1
-    print_validation_accuracy(accuracy, min_prob, max_prob)
-    return accuracy, avg_loss
-
-def train_model():
-    print_start("Training")
-
-    dataframe = pd.read_csv("input/train.csv")
-    numeric_labels = dataframe["Target"].map(lambda label: 1 if label == "E" else 0)
-    class_weights = compute_class_weight(class_weight="balanced", classes=np.array([0, 1]), y=numeric_labels)
-    positive_class_weight = torch.tensor(class_weights[1], dtype=torch.float).to(device)
-
-    train_dataframe, validation_dataframe = train_test_split(
-        dataframe, test_size=0.2, stratify=dataframe["Target"], random_state=42
-    )
-
-    train_dataset = BreathingAudioDataset(train_dataframe, "input/train", is_training=True)
-    validation_dataset = BreathingAudioDataset(validation_dataframe, "input/train", is_training=True)
-
-    train_data_loader = DataLoader(
-        train_dataset, batch_size=32, shuffle=True,
-        num_workers=0, pin_memory=True, collate_fn=breathing_collate_fn
-    )
-
-    validation_data_loader = DataLoader(
-        validation_dataset, batch_size=64, shuffle=False,
-        num_workers=0, pin_memory=True, collate_fn=breathing_collate_fn
-    )
-
-    model = Model().to(device)
-    criterion = BCEWithLogitsLabelSmoothing(smoothing=0.05, pos_weight=positive_class_weight)
-    optimizer = optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-3)
-
-    # scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-    #     optimizer, mode='max', factor=0.5, patience=1, min_lr=1e-6, verbose=True
-    # )
-    scheduler = LambdaLR(optimizer, lr_lambda)
-
-    os.makedirs("models", exist_ok=True)
-    best_validation_accuracy = 0.0
-    patience = 7
-    patience_counter = 0
-    min_delta = 0.001
-
+def train_model(
+        model,
+        train_loader: DataLoader,
+        val_loader: DataLoader,
+        device: torch.device,
+        save_dir: str,
+        num_epochs: int = 30,
+        base_lr: float = 1e-3,
+        weight_decay: float = 1e-4,
+        patience: int = 15,
+        min_delta: float = 1e-4,
+        monitor: str = "val_acc",
+        restore_best_weights: bool = True,
+        use_cutmix: bool = True,
+        use_mixup: bool = True,
+        cutmix_prob: float = 0.5,
+        mixup_prob: float = 0.5,
+        cutmix_alpha: float = 1.0,
+        mixup_alpha: float = 0.2,
+        warmup_epochs: int = 5,
+):
+    os.makedirs(save_dir, exist_ok=True)
+    model = model.to(device)
     count_parameters(model)
 
-    accumulation_steps = 2
+    optimizer = torch.optim.AdamW(model.parameters(), lr=base_lr, weight_decay=weight_decay)
 
-    for epoch_index in range(1, 51):
+    total_steps = len(train_loader) * num_epochs
+    warmup_steps = int(0.05 * total_steps)
+    scheduler = SequentialLR(
+        optimizer,
+        schedulers=[
+            LinearLR(optimizer, start_factor=0.1, total_iters=warmup_steps),
+            CosineAnnealingLR(optimizer, T_max=total_steps - warmup_steps, eta_min=1e-6),
+        ],
+        milestones=[warmup_steps],
+    )
+
+    criterion = nn.BCEWithLogitsLoss()
+    scaler = GradScaler(enabled=(device.type != "cpu"))
+
+    best_val_acc = 0.0
+    best_val_loss = float("inf")
+    best_ckpt = None
+    best_weights = None
+    early_stop_counter = 0
+
+    print_start(f"학습 레츠고~ (CutMix: {use_cutmix}, MixUp: {use_mixup})\n")
+
+    for epoch in range(num_epochs):
         model.train()
-        total_loss = 0.0
-        optimizer.zero_grad()
+        train_loss, train_correct, total = 0.0, 0, 0
 
-        progress = progress_bar(train_data_loader, description=f"📦 Epoch {epoch_index}")
+        use_aug = epoch >= warmup_epochs
 
-        for batch_idx, (features, scalars, labels) in enumerate(progress):
-            features = features.to(device)
-            scalars = scalars.to(device)
-            labels = labels.float().to(device)
+        for batch_idx, (features, scalars, labels) in enumerate(train_loader):
+            features, scalars, labels = map(lambda x: x.to(device, non_blocking=True), (features, scalars, labels))
+            # non_blocking True쓰면 개빠릅니다
 
-            outputs = model(features, scalars).squeeze()
-            loss = criterion(outputs, labels)
-            loss = loss / accumulation_steps
-            loss.backward()
+            original_labels = labels.clone()
+            mixed = False
 
-            if (batch_idx + 1) % accumulation_steps == 0:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                optimizer.step()
-                optimizer.zero_grad()
+            if use_aug and (use_cutmix or use_mixup):
+                r = np.random.rand()
 
-            total_loss += loss.item() * accumulation_steps
-            current_lr = optimizer.param_groups[0]['lr']
-            progress.set_postfix({"Loss": f"{loss.item() * accumulation_steps:.4f}", "LR": f"{current_lr:.6f}"})
+                if use_cutmix and r < cutmix_prob:
+                    features, labels, _, lam = cutmix_data(features, labels, cutmix_alpha, device.type)
+                    mixed = True
+                elif use_mixup and r < (cutmix_prob + mixup_prob):
+                    indices = torch.randperm(features.size(0)).to(device)
+                    lam = np.random.beta(mixup_alpha, mixup_alpha)
 
-        if (batch_idx + 1) % accumulation_steps != 0:
-            optimizer.step()
-            optimizer.zero_grad()
+                    features = lam * features + (1 - lam) * features[indices]
+                    scalars = lam * scalars + (1 - lam) * scalars[indices]
+                    labels = lam * labels + (1 - lam) * labels[indices]
+                    mixed = True
 
-        average_loss = total_loss / len(train_data_loader)
-        print_epoch_summary(epoch_index, average_loss)
+            optimizer.zero_grad(set_to_none=True)
+            with autocast(enabled=(device.type != "cpu")):
+                logits = model(features, scalars)
+                loss = criterion(logits, labels)
 
-        validation_accuracy, val_loss = evaluate_model(model, validation_data_loader, criterion)
-        scheduler.step(validation_accuracy)
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            scaler.step(optimizer)
+            scaler.update()
+            scheduler.step()
 
-        if validation_accuracy > best_validation_accuracy + min_delta:
-            best_validation_accuracy = validation_accuracy
-            torch.save({
-                'epoch': epoch_index,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'validation_accuracy': validation_accuracy,
-                'validation_loss': val_loss
-            }, "models/best_model.pth")
-            print_success(f"Best model saved with accuracy: {best_validation_accuracy:.4f}")
-            patience_counter = 0
+            if not mixed:
+                preds = (logits > 0.0).float()
+                train_correct += (preds == labels).sum().item()
+                total += labels.size(0)
+            else:
+                with torch.no_grad():
+                    preds = (logits > 0.0).float()
+                    train_correct += (preds == original_labels).sum().item()
+                    total += original_labels.size(0)
+
+            train_loss += loss.item()
+
+        train_acc = train_correct / total
+        avg_train_loss = train_loss / len(train_loader)
+
+        model.eval()
+        val_loss, val_correct, val_total = 0.0, 0, 0
+        with torch.no_grad():
+            for features, scalars, labels in val_loader:
+                features, scalars, labels = map(lambda x: x.to(device, non_blocking=True), (features, scalars, labels))
+                with autocast(enabled=(device.type != "cpu")):
+                    logits = model(features, scalars)
+                    loss = criterion(logits, labels)
+
+                preds = (logits > 0.0).float()
+                val_correct += (preds == labels).sum().item()
+                val_total += labels.size(0)
+                val_loss += loss.item()
+
+        val_acc = val_correct / val_total
+        avg_val_loss = val_loss / len(val_loader)
+
+        aug_status = f" [Aug: {'ON' if use_aug else 'OFF'}]" if use_cutmix or use_mixup else ""
+        print(
+            f"[Epoch {epoch+1:02d}]{aug_status} "
+            f"Train Loss: {avg_train_loss:.6} | Train Acc: {train_acc:.6f} || "
+            f"Val Loss: {avg_val_loss:.6f} | Val Acc: {val_acc:.6f}"
+        )
+
+        if monitor == "val_acc":
+            metric = val_acc
+            best_metric = best_val_acc
         else:
-            patience_counter += 1
-            if patience_counter >= patience:
-                print_warning(f"⏹️ Early stopping. Best Validation Accuracy: {best_validation_accuracy:.4f}")
+            metric = -avg_val_loss
+            best_metric = -best_val_loss
+
+        if metric - best_metric > min_delta:
+            best_val_acc = val_acc
+            best_val_loss = avg_val_loss
+            best_ckpt = os.path.join(save_dir, f"best_epoch{epoch+1:02d}.pth")
+            best_weights = model.state_dict() if restore_best_weights else None
+            early_stop_counter = 0
+            torch.save({
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "scheduler_state_dict": scheduler.state_dict(),
+                "val_acc": val_acc,
+                "val_loss": avg_val_loss,
+                "epoch": epoch + 1,
+                "cutmix_used": use_cutmix,
+                "mixup_used": use_mixup
+            }, best_ckpt)
+        else:
+            early_stop_counter += 1
+            if early_stop_counter >= patience:
+                print_warning("끝;;;;")
+                if restore_best_weights and best_weights is not None:
+                    model.load_state_dict(best_weights)
                 break
 
-        if epoch_index % 5 == 0:
-            torch.save({
-                'epoch': epoch_index,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'validation_accuracy': validation_accuracy
-            }, f"models/checkpoint_epoch{epoch_index}.pth")
+    return best_ckpt, best_val_acc
