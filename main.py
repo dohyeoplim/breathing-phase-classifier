@@ -1,13 +1,29 @@
 import argparse
-from src.train import train_model
-from src.infer import predict_model
+import torch
+from src.scripts import run_train_and_predict
+from src.precompute.core import precompute
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=["train", "predict"], help="train | predict")
+    parser.add_argument("--precompute", action="store_true")
     args = parser.parse_args()
 
-    if args.mode == "train":
-        train_model()
-    elif args.mode == "predict":
-        predict_model()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    print(device)
+    if torch.cuda.is_available():
+        print(f"GPU: {torch.cuda.get_device_name(0)}")
+        print(f"Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
+
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+    torch.backends.cudnn.benchmark = True
+    torch.backends.cudnn.deterministic = False
+
+    if args.precompute:
+        precompute()
+    else:
+        run_train_and_predict(device=device)
+
+if __name__ == "__main__":
+    main()
