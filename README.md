@@ -188,3 +188,17 @@ Then the final ensemble output is:
 P_\text{final} = \sum_{i=1}^{n} \alpha_i \cdot \sigma(\text{logits}_i)
 ```
 
+## 🏆 Kaggle Leaderboard Standing
+
+> [**Competition Page**](https://www.kaggle.com/competitions/2025-1-1-2/)
+> 
+> Final Public Score: 0.78571
+> 
+> Final Private Score: 0.76666
+> 
+> Rank: **Top 6** out of 60 teams
+
+![kaggle_lb](https://github.com/user-attachments/assets/1788cf79-654e-479c-94fe-541828cdfa54)
+
+
+---
