@@ -1,0 +1,28 @@
+\documentclass[conference]{IEEEtran}
+\usepackage{settings}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+We present a deep learning framework for non-invasive respiratory phase classification (inhalation/exhalation) from one-second audio clips. Our hybrid-feature approach uses nine spectral representations, including Mel-spectrograms and MFCCs, and 39 scalar features to train two distinct Convolutional Neural Networks (CNNs): a lightweight 2.43M parameter model and a larger 8.15M parameter VGG-inspired architecture. To improve generalization against real-world acoustic variability, the models are trained with CutMix and MixUp data augmentation. A final weighted ensemble of these models, with weights determined by validation performance, achieves a classification accuracy of 76.7\% on the private test set.
+\end{abstract}
+
+\input{sections/introduction}
+
+\input{sections/method}
+
+\input{sections/results}
+
+\input{sections/discussion}
+
+\input{sections/conclusion}
+
+\appendices
+\section{Code Availability}
+The source code for this project is publicly available at:  \url{https://github.com/dohyeoplim/breathing-phase-classifier}
+
+\bibliography{references.bib}
+
+\end{document}

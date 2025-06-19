@@ -1,0 +1,17 @@
+\section{Discussion}
+
+\subsection{Interpretation of Results}
+
+A key observation from our experiments is how well data augmentation methods from computer vision, specifically CutMix and MixUp, transferred to the domain of audio spectrograms. Their success here suggests a degree of cross-domain applicability, though our results also show the model benefits from a few warmup epochs to grasp basic patterns before augmentation begins. The value of the hybrid-feature design was also clear; adding the scalar feature vector consistently improved accuracy, pointing to complementary acoustic information that spectral images alone do not capture.
+
+One of the main takeaways is the trade-off between model size and performance. The VGG-inspired network, despite having over three times the parameters, was only marginally better than the lightweight CNN8. The fact that our ensemble outperformed both models underscores that, for this problem, combining architecturally different models is a more effective strategy than simply increasing the scale of a single network.
+
+\subsection{Limitations}
+
+This study has two main limitations. First, the fixed one-second segmentation of audio clips prevents the models from learning temporal dependencies that span multiple respiratory cycles. Information about the overall breathing rhythm is lost. Second, our feature engineering strategy, while effective, is fixed. An end-to-end approach that learns features directly from raw audio might discover more optimal, task-specific representations.
+
+\subsection{Future Work}
+
+Based on these findings, future research could proceed in several directions. To address the limitation of fixed-length inputs, recurrent or attention-based architectures (e.g., LSTMs, Transformers) could be employed to model long-range temporal context. An end-to-end learning framework should also be investigated as a potential alternative to hand-crafted features.
+
+For clinical applicability, two extensions are proposed. First, model interpretability methods, such as gradient-based attribution, could be used to visualize which parts of a sound are most indicative of inhalation or exhalation. Second, the binary classification task could be expanded to a multi-class problem that includes other respiratory events, such as breath-holds and coughs, to create a more comprehensive monitoring tool.
