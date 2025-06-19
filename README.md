@@ -68,17 +68,25 @@ All audio samples are preprocessed and saved as `.npz` files to reduce computati
 ### Spectrogram-based features
 
 - `STFT` (Log-Power Spectrogram)
-  ![STFT](https://github.com/user-attachments/assets/3bedca86-7ade-4bb8-9f14-a8e3aff220e0)
+  ![stft](https://github.com/user-attachments/assets/09c7ef75-8c14-4ec3-a05e-0d57cea912ad)
+
 - `mel`, `mel_delta`, `mel_delta2`: log-scaled Mel-spectrogram (128 bins) and 1st and 2nd temporal derivatives of mel
-  ![Mel](https://github.com/user-attachments/assets/cc4803fa-e331-4812-973b-45f5b1eb8dd7)
+  ![mel](https://github.com/user-attachments/assets/2513fef2-03cc-465f-b5e1-c32b4f295cdf)
+
 - `mfcc`: 40 MFCCs + delta + delta², vertically stacked and rescaled to 128 bins
-  ![MFC](https://github.com/user-attachments/assets/c8ea0e8f-c6f9-4b47-92fb-cd7cb55b7b8f)
+  ![mfcc](https://github.com/user-attachments/assets/9e526e42-91bd-4297-9c67-26ff85f74443)
+
 - `chroma`: concatenation of chroma energy (`chroma_stft`) and CENS features
-  ![chroma](https://github.com/user-attachments/assets/c4e10ca0-be6c-4248-8929-1bb1276efa59)
+  ![chroma](https://github.com/user-attachments/assets/cc3f9582-34e8-4e52-81f6-5024f0539a04)
+
 - `gammatone`: Mel-filter-applied gammatone approximation (64 bands → 128 bins)
-- `lpc`: LPC coefficient matrix padded to `[128 × T]`
+  ![gammatone](https://github.com/user-attachments/assets/3f92b2f6-ae03-4bf7-a7fa-8308bc5b3884)
+
 - `mod_spec`: 2D DCT of log-mel (spectral modulation)
+  ![modulation](https://github.com/user-attachments/assets/ccecb20d-ec6b-4c1c-864d-d44cfd575ac8)
+
 - `tempogram`: tempogram extracted from onset envelope
+  ![modulation](https://github.com/user-attachments/assets/235e98ec-5e3a-4284-8f18-8bfb46f32373)
 
 ### Scalar features
 - RMS, ZCR, centroid, bandwidth, rolloff, flatness, contrast
@@ -86,6 +94,8 @@ All audio samples are preprocessed and saved as `.npz` files to reduce computati
 - Low-frequency energy ratio, spectral flux
 - Skewness, kurtosis, amplitude percentiles
 - Short-lag autocorrelation values, first minimum index
+
+![scalars](https://github.com/user-attachments/assets/62ae2fe1-5f22-43c4-9858-b1c356fd0f0e)
 
 ### Execution
 
@@ -168,6 +178,7 @@ Inspired by the VGG family, enhanced with GELU, residual connection, and aggress
 - **Data Augmentation**:
   - **CutMix** and **MixUp** are applied probabilistically during training (`cutmix_prob = 0.6`, `mixup_prob = 0.4`)
   - Augmentations are activated after a warm-up period (`warmup_epochs = 4`)
+    ![augmentation_result](https://github.com/user-attachments/assets/0a241a2b-86eb-4f0f-b7d6-d77de4df1026)
 
 <br />
 
@@ -188,7 +199,9 @@ Then the final ensemble output is:
 P_\text{final} = \sum_{i=1}^{n} \alpha_i \cdot \sigma(\text{logits}_i)
 ```
 
-## 🏆 Kaggle Leaderboard Standing
+## 🏆 Results and Kaggle Leaderboard Standing
+
+![acc_results](https://github.com/user-attachments/assets/ee8c158b-8a73-4328-ba9c-4fb2add0d357)
 
 > [**Competition Page**](https://www.kaggle.com/competitions/2025-1-1-2/)
 > 
